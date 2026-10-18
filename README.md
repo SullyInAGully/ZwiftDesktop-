@@ -126,9 +126,14 @@ characteristic `8E6F1001-…`, read + notify) carrying one enriched 1 Hz JSON fr
 (schema v1, chunked with an 11-byte header: `"CZ"`, version, u32 sequence, u16 index, u16 count).
 Account IDs never cross this link. Pass `--no-ble` to disable it.
 
-The native helper in `mac-ble/` is compiled on first run into `.build/CyclingOSZwiftBLE.app`
-(a bundle is required so macOS grants CoreBluetooth access; approve the Bluetooth prompt once).
-Run `npm run build:ble` to rebuild it manually.
+The native helper in `mac-ble/` ships as a prebuilt, ad-hoc-signed **universal app**
+(`mac-ble/prebuilt/CyclingOSZwiftBLE.app`, Apple Silicon and Intel, macOS 11 or newer), so riders'
+Macs need no compiler. A bundle is required so macOS grants CoreBluetooth access; approve the
+Bluetooth prompt once. If the helper source changes, `run-helper.sh` compiles a local copy when the
+Command Line Tools are installed and otherwise keeps using the prebuilt one with a warning.
+
+After editing `mac-ble/ZwiftLivePeripheral.swift` or `Info.plist`, run `npm run build:ble` on a Mac
+(Xcode or Command Line Tools) and commit `mac-ble/prebuilt`. Windows cannot build this helper.
 
 On the phone, use the Zwift live scan control, then start a direct Zwift ride. The phone's
 `ZwiftLiveBleClient` feeds `SessionManager`, and `CsvExporter` writes the normal Strava-format CSV.

@@ -11,7 +11,7 @@
     "start:relay": "node src/index.mjs",
     "start:sauce": "node src/sauce-monitor.mjs",
     "route:add": "node tools/build-route-profile.mjs",
-    "build:ble": "mkdir -p .build/CyclingOSZwiftBLE.app/Contents/MacOS && cp mac-ble/Info.plist .build/CyclingOSZwiftBLE.app/Contents/Info.plist && xcrun swiftc mac-ble/ZwiftLivePeripheral.swift -o .build/CyclingOSZwiftBLE.app/Contents/MacOS/CyclingOSZwiftBLE",
+    "build:ble": "sh mac-ble/build-universal.sh",
     "test": "node --test"
   },
   "engines": {
