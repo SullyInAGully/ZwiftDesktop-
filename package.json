@@ -1,0 +1,23 @@
+{
+  "name": "zwift-live-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only experimental Zwift PlayerState and route-log monitor for CyclingOS",
+  "scripts": {
+    "credentials": "node src/credentials.mjs",
+    "start": "node src/companion-monitor.mjs",
+    "start:companion": "node src/companion-monitor.mjs",
+    "start:relay": "node src/index.mjs",
+    "start:sauce": "node src/sauce-monitor.mjs",
+    "route:add": "node tools/build-route-profile.mjs",
+    "build:ble": "mkdir -p .build/CyclingOSZwiftBLE.app/Contents/MacOS && cp mac-ble/Info.plist .build/CyclingOSZwiftBLE.app/Contents/Info.plist && xcrun swiftc mac-ble/ZwiftLivePeripheral.swift -o .build/CyclingOSZwiftBLE.app/Contents/MacOS/CyclingOSZwiftBLE",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "protobufjs": "8.8.1"
+  }
+}

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CyclingOS Zwift Link</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#16191d; --muted:#667085; --line:#e4e7ec;
+          --ok:#12805c; --warn:#b54708; --bad:#b42318; --wait:#667085; --accent:#2850d9; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1216; --card:#181c22; --text:#eceff3; --muted:#98a2b3; --line:#2a303a;
+            --ok:#4cc79a; --warn:#f0a35c; --bad:#f97066; --wait:#98a2b3; --accent:#7f9cff; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 -apple-system,system-ui,sans-serif; }
+  main { max-width:880px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:22px; margin:0 0 2px; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  .banner { padding:14px 16px; border-radius:12px; font-weight:600; margin-bottom:20px; border:1px solid var(--line); background:var(--card); }
+  .banner.ok { border-color:var(--ok); color:var(--ok); }
+  .banner.wait { color:var(--warn); border-color:var(--warn); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; margin-bottom:20px; overflow:hidden; }
+  .card h2 { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:0; padding:12px 16px; border-bottom:1px solid var(--line); }
+  .check { display:flex; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); align-items:flex-start; }
+  .check:last-child { border-bottom:0; }
+  .dot { flex:none; width:22px; height:22px; border-radius:50%; margin-top:1px; display:grid; place-items:center; font-size:13px; font-weight:700; color:#fff; background:var(--wait); }
+  .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); } .dot.warn { background:var(--warn); }
+  .check b { display:block; } .check span { color:var(--muted); font-size:13px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); }
+  .tile { padding:14px 16px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .tile .k { color:var(--muted); font-size:12px; }
+  .tile .v { font-size:22px; font-weight:650; font-variant-numeric:tabular-nums; }
+  .tile .u { font-size:12px; color:var(--muted); font-weight:400; margin-left:3px; }
+  code { background:var(--bg); padding:1px 5px; border-radius:4px; font-size:13px; }
+  .pad { padding:14px 16px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input[type=email], input[type=password], select { width:100%; max-width:360px; padding:9px 10px; font:inherit; color:var(--text);
+    background:var(--bg); border:1px solid var(--line); border-radius:8px; }
+  button { font:inherit; font-weight:600; padding:9px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  .msg { margin-top:10px; font-size:13px; } .msg.bad { color:var(--bad); }
+  .toggle { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); }
+  .toggle input { width:18px; height:18px; }
+  .toggle span { color:var(--muted); font-size:13px; display:block; }
+  .hint { padding:12px 16px; color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>CyclingOS Zwift Link</h1>
+  <p class="sub" id="sub">Connecting to the monitor…</p>
+  <div class="banner wait" id="banner">Checking…</div>
+
+  <section class="card"><h2>Zwift account</h2><div class="pad" id="account"></div></section>
+  <section class="card"><h2>Test without Zwift</h2><div class="toggle" style="border:0"><input type="checkbox" id="sim"><div><b>Simulate a ride</b><span>Sends a synthetic 200 W ride on the first catalogued route through the same pipeline: climb engine, Bluetooth, phone and CSV. No Zwift or trainer needed. Rows and files are labelled “simulated”.</span></div></div></section>
+  <section class="card"><h2>Settings</h2><div id="settings"></div></section>
+  <section class="card"><h2>Setup checklist</h2><div id="checks"></div></section>
+  <section class="card"><h2>Live from Zwift</h2><div class="grid" id="tiles"></div>
+    <div class="hint" id="liveHint"></div></section>
+  <section class="card"><h2>Phone app steps</h2>
+    <div class="hint">1. Open PolarSDKTest and allow Bluetooth permissions.<br>
+    2. Use the Zwift live scan control; the "Phone connected" check above turns green.<br>
+    3. Start a direct Zwift ride. The phone records the Strava-format CSV.</div></section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = (v, d = 0) => v == null || Number.isNaN(+v) ? "–" : (+v).toFixed(d);
+let status = null, lastOk = 0;
+
+function checks(s) {
+  const riding = s.rideStatus === "riding";
+  const list = baseChecks(s, riding);
+  if (s.simulating) {
+    list[0] = { state: "ok", title: "Signed in to Zwift", detail: "Skipped: simulated ride, no Zwift needed." };
+    list[1] = { state: "ok", title: "Zwift game connected", detail: "Skipped: simulated ride." };
+  }
+  return list;
+}
+
+function baseChecks(s, riding) {
+  return [
+    { state: s.phase === "running" ? "ok" : s.phase === "error" ? "bad" : "wait", title: "Signed in to Zwift",
+      detail: s.phase === "running" ? `${esc(s.athleteName || s.username)} · receiver ${s.advertiseIp}:${s.companionPort}`
+        : s.phase === "error" ? s.error : s.phase === "connecting" ? "Signing in…" : s.phase === "idle" ? "Press Connect above." : "Enter your Zwift login above." },
+    { state: s.zwiftConnected ? "ok" : "wait", title: "Zwift game connected",
+      detail: s.zwiftConnected ? "Receiving PlayerState from the game." : "Waiting. Start Zwift and begin a ride; if it never connects, restart the Zwift game once." },
+    { state: riding && s.dataFresh ? "ok" : (s.zwiftConnected ? "warn" : "wait"), title: "Live data is fresh",
+      detail: riding && s.dataFresh ? "1 Hz samples are flowing." : "No fresh rider data yet. Pedal in Zwift (not paused or in the menu)." },
+    { state: s.routeKnown === true ? "ok" : (s.routeKnown === false ? "warn" : "wait"), title: "Route recognised for climb data",
+      detail: s.routeKnown === true ? `${s.routeName}: climb fields are being calculated (catalogue v${s.routeCatalogueVersion}).`
+        : s.routeKnown === false ? `${s.routeName ?? "This route"} isn't in the catalogue, so climb columns will be empty. Known routes: ${s.catalogueRoutes.join(", ") || "none"}. Add one with npm run route:add.`
+        : `Starts once you're riding. Known routes: ${s.catalogueRoutes.join(", ") || "none"}.` },
+    { state: !s.bleEnabled ? "warn" : s.bleReady ? "ok" : "bad", title: "Bluetooth broadcasting",
+      detail: !s.bleEnabled ? "Disabled with --no-ble." : s.bleReady ? "Advertising as “CyclingOS Zwift”." : (s.bleMessage || "Helper not ready. Check System Settings → Privacy & Security → Bluetooth and that Bluetooth is on.") },
+    { state: !s.bleEnabled ? "wait" : s.blePhones > 0 ? "ok" : "wait", title: "Phone connected",
+      detail: s.blePhones > 0 ? `${s.blePhones} phone${s.blePhones > 1 ? "s" : ""} subscribed and receiving frames.` : "Waiting for the phone app to scan and connect." },
+    { state: s.sessionCsv ? "ok" : "wait", title: "Mac backup recording",
+      detail: s.sessionCsv ? s.sessionCsv.split("/").slice(-2).join("/") : "Starts with the first ride sample." }
+  ];
+}
+
+async function act(name, body = {}) {
+  busy = true; $("formMsg") && ($("formMsg").textContent = "");
+  try {
+    const r = await fetch("/api/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "Request failed");
+    status = j.status; lastOk = Date.now();
+    return true;
+  } catch (e) {
+    if ($("formMsg")) { $("formMsg").className = "msg bad"; $("formMsg").textContent = e.message; }
+    return false;
+  } finally { busy = false; shown = null; render(); }
+}
+let busy = false, shown = null;
+
+function renderAccount(s) {
+  const key = s.phase + "|" + s.username + "|" + busy;
+  if (key === shown && s.phase !== "connecting") return;
+  const typing = document.activeElement?.closest?.("#account");
+  if (typing && key.split("|")[0] === (shown || "").split("|")[0]) return;
+  shown = key;
+  const form = `<label for="u">Zwift email</label><input id="u" type="email" autocomplete="username" value="${esc(s.username ?? "")}">
+    <label for="p">Zwift password</label><input id="p" type="password" autocomplete="current-password">
+    <div class="row"><button class="primary" id="save" ${busy ? "disabled" : ""}>Save &amp; connect</button></div>
+    <div class="hint" style="padding:8px 0 0">Stored in the macOS Keychain on this Mac. It is only used to register this Mac with Zwift.</div>`;
+  const msg = '<div class="msg" id="formMsg"></div>';
+  const A = $("account");
+  if (s.phase === "setup") A.innerHTML = form + msg;
+  else if (s.phase === "idle") A.innerHTML = `Saved account: <b>${esc(s.username)}</b><div class="row"><button class="primary" id="connect">Connect</button><button class="danger" id="forget">Forget login</button></div>` + msg;
+  else if (s.phase === "connecting") A.innerHTML = `Signing in as <b>${esc(s.username)}</b>…`;
+  else if (s.phase === "running") A.innerHTML = `Connected as <b>${esc(s.athleteName || s.username)}</b><div class="row"><button id="disconnect">Disconnect</button><button class="danger" id="forget">Forget login</button></div>` + msg;
+  else A.innerHTML = `<div class="msg bad" style="margin:0 0 6px">${esc(s.error)}</div>` + form + `<div class="row"><button id="retry">Retry saved login</button><button class="danger" id="forget">Forget login</button></div>` + msg;
+  const on = (id, fn) => $(id) && ($(id).onclick = fn);
+  on("save", () => act("saveCredentials", { username: $("u").value, password: $("p").value }));
+  on("connect", () => act("connect")); on("retry", () => act("connect"));
+  on("disconnect", () => act("disconnect"));
+  on("forget", () => confirm("Remove the saved Zwift login from this Mac?") && act("forgetCredentials"));
+}
+
+let settingsKey = null;
+function renderSettings(s) {
+  const key = JSON.stringify([s.settings, s.interfaces]);
+  if (key === settingsKey) return;
+  settingsKey = key;
+  const cfg = s.settings;
+  const opts = ['<option value="">Automatic</option>', ...s.interfaces.map(i => `<option value="${i.address}" ${cfg.advertiseIp === i.address ? "selected" : ""}>${esc(i.name)} · ${i.address}</option>`)];
+  if (cfg.advertiseIp && !s.interfaces.some(i => i.address === cfg.advertiseIp)) opts.push(`<option value="${cfg.advertiseIp}" selected>${cfg.advertiseIp} (not on this Mac now)</option>`);
+  $("settings").innerHTML = `<div class="toggle"><input type="checkbox" id="ble" ${cfg.bleEnabled ? "checked" : ""}><div><b>Send data to the phone over Bluetooth</b><span>Advertises “CyclingOS Zwift” for the PolarSDKTest app.</span></div></div>
+    <div class="toggle"><input type="checkbox" id="auto" ${cfg.autoConnect ? "checked" : ""}><div><b>Connect automatically on launch</b><span>Uses the saved login when the monitor starts.</span></div></div>
+    <div class="pad"><label for="ip">Network address Zwift should send data to</label><select id="ip">${opts.join("")}</select>
+    <div class="hint" style="padding:6px 0 0">Choose the Wi-Fi/Ethernet address of this Mac, on the same network as the machine running Zwift. Changing it reconnects.</div></div>`;
+  $("ble").onchange = e => act("saveSettings", { bleEnabled: e.target.checked });
+  $("auto").onchange = e => act("saveSettings", { autoConnect: e.target.checked });
+  $("ip").onchange = e => act("saveSettings", { advertiseIp: e.target.value || null });
+}
+
+function render() {
+  const s = status;
+  if (!s) return;
+  renderAccount(s); renderSettings(s);
+  if ($("sim").checked !== s.simulating && !busy) $("sim").checked = s.simulating;
+  const stale = Date.now() - lastOk > 5000;
+  $("sub").textContent = stale ? "Monitor not responding. Is `npm start` still running?" : `Up ${Math.round((s.now - s.startedAtMs) / 60000)} min`;
+  const list = checks(s);
+  $("checks").innerHTML = list.map(c => `<div class="check"><div class="dot ${c.state}">${{ok:"✓",bad:"✕",warn:"!",wait:"…"}[c.state]}</div><div><b>${c.title}</b><span>${c.detail}</span></div></div>`).join("");
+  const ready = list.every(c => c.state === "ok");
+  const banner = $("banner");
+  const blockers = list.filter(c => c.state !== "ok");
+  banner.className = "banner " + (ready ? "ok" : "wait");
+  banner.textContent = s.simulating && ready ? "Simulated ride running. Data is flowing to your phone." : ready ? "All set. Data is flowing to your phone." : `${blockers.length} step${blockers.length > 1 ? "s" : ""} left: ${blockers.map(b => b.title).join(", ")}`;
+
+  const l = s.live;
+  const tiles = [
+    ["Power", fmt(l?.powerW), "W"], ["Heart rate", fmt(l?.heartRateBpm), "bpm"], ["Cadence", fmt(l?.cadenceRpm), "rpm"],
+    ["Speed", fmt(l?.speedKmh, 1), "km/h"], ["Distance", fmt(l?.distanceM), "m"], ["Ascent", fmt(l?.ascentM), "m"],
+    ["Gradient", fmt(l?.gradientPct, 1), "%"], ["Terrain", l?.terrain ?? "–", ""],
+    ["On climb", l ? (l.onClimb ? "Yes" : "No") : "–", ""], ["To next climb", fmt(l?.distanceToNextClimbM), "m"],
+    ["To summit", fmt(l?.distanceToSummitM), "m"], ["Gain remaining", fmt(l?.remainingElevationGainM), "m"]
+  ];
+  $("tiles").innerHTML = tiles.map(([k, v, u]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}<span class="u">${u}</span></div></div>`).join("");
+  $("liveHint").textContent = l ? `${l.routeName ?? "Unknown route"} · ${fmt(l.routeDistanceM)} of ${fmt(l.plannedDistanceM)} m` : "No ride in progress.";
+}
+
+async function poll() {
+  try { status = await (await fetch("/status", { cache: "no-store" })).json(); lastOk = Date.now(); }
+  catch { /* shown as stale */ }
+  render();
+}
+$("sim").onchange = e => act("simulate", { enabled: e.target.checked });
+poll(); setInterval(poll, 1000);
+</script>
+</body>
+</html>
