@@ -11,6 +11,10 @@ You need: your Mac, Zwift on the same Mac, your phone with the CyclingOS app, an
    macOS asks this once because the program was not downloaded from the App Store. It is safe.
    If macOS asks to let Terminal access your Desktop or Downloads, click OK.
 
+   NO "OPEN" BUTTON? (newer macOS versions only show Done / Move to Trash)
+   Click Done. Then open System Settings > Privacy & Security, scroll down to the Security section,
+   and click "Open Anyway" next to "Start Zwift Link". Enter your Mac password, then click Open.
+
 3. A Terminal window opens, then a web page (the "dashboard"). Keep the Terminal window open.
    If macOS asks whether "node" may accept incoming connections, click ALLOW.
    (If you clicked Deny by mistake: System Settings > Network > Firewall > Options, set node to Allow.)
