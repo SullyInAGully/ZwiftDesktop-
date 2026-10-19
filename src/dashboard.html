@@ -98,9 +98,11 @@ function baseChecks(s, riding) {
       detail: s.zwiftConnected ? "Receiving PlayerState from the game." : "Waiting. Start Zwift and begin a ride; if it never connects, restart the Zwift game once." },
     { state: riding && s.dataFresh ? "ok" : (s.zwiftConnected ? "warn" : "wait"), title: "Live data is fresh",
       detail: riding && s.dataFresh ? "1 Hz samples are flowing." : "No fresh rider data yet. Pedal in Zwift (not paused or in the menu)." },
-    { state: s.routeKnown === true ? "ok" : (s.routeKnown === false ? "warn" : "wait"), title: "Route recognised for climb data",
-      detail: s.routeKnown === true ? `${s.routeName}: climb fields are being calculated (catalogue v${s.routeCatalogueVersion}).`
-        : s.routeKnown === false ? `${s.routeName ?? "This route"} isn't in the catalogue, so climb columns will be empty. Known routes: ${s.catalogueRoutes.join(", ") || "none"}. Add one with npm run route:add.`
+    { state: s.routeKnown === true && s.routePositionKnown ? "ok" : (s.routeKnown == null ? "wait" : "warn"), title: "Route recognised for climb data",
+      detail: s.routeKnown != null && !s.routePositionKnown
+        ? `Zwift's log isn't being read (expected at <code>${esc(s.routeLogPath)}</code>), so the position on the route is unknown: climb fields stay empty and new routes can't be learned. Start the bridge with <code>--log PATH</code> if Zwift writes it elsewhere.`
+        : s.routeKnown === true ? `${esc(s.routeName)}: climb fields are being calculated (catalogue v${s.routeCatalogueVersion}).${s.routeLearnResult?.added && s.routeLearnResult.routeName === s.routeName ? " Added automatically from your full lap; commit routes/catalog-v1.json to share it." : ""}`
+        : s.routeKnown === false ? learningDetail(s)
         : `Starts once you're riding. Known routes: ${s.catalogueRoutes.join(", ") || "none"}.` },
     { state: !s.wifiEnabled ? "bad" : s.lanError ? "bad" : s.lanListening ? "ok" : "wait", title: "Wi-Fi stream for the phone",
       detail: !s.wifiEnabled ? "Turned off in Settings below. The phone apps need it."
@@ -116,6 +118,16 @@ function baseChecks(s, riding) {
     { state: s.sessionCsv ? "ok" : "wait", title: `${host(s)} backup recording`,
       detail: s.sessionCsv ? s.sessionCsv.split(/[\\/]/).slice(-2).join("/") : "Starts with the first ride sample." }
   ];
+}
+
+function learningDetail(s) {
+  const name = esc(s.routeName ?? "This route");
+  const p = s.routeLearning, last = s.routeLearnResult;
+  const rejected = last && !last.added && String(last.routeId) === String(p?.routeId ?? last.routeId)
+    ? ` Last lap not added: ${last.problems.map(esc).join("; ")}.` : "";
+  if (!p) return `${name} isn't in the catalogue yet, so climb fields are empty. Ride one full lap from the start line and it is added automatically.${rejected}`;
+  if (!p.fromStart) return `${name} isn't in the catalogue yet. This lap began partway round, so it can't be used; the next full lap from the start line will be.${rejected}`;
+  return `${name} isn't in the catalogue yet. Learning it from this lap: ${p.coveragePct}% recorded. It is added when you reach the finish.${rejected}`;
 }
 
 async function act(name, body = {}) {

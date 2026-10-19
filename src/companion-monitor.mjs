@@ -15,7 +15,8 @@ import { PairingGuard, formatPairingCode, generatePairingCode, isValidPairingCod
 import { startLocalServer } from "./local-server.mjs";
 import { DEFAULT_LOG_PATH, RouteLogWatcher } from "./route-log.mjs";
 import { ZwiftClient } from "./zwift-client.mjs";
-import { RouteProfileCatalogue } from "./route-profile.mjs";
+import { RouteProfileCatalogue, saveRouteToCatalogue } from "./route-profile.mjs";
+import { RouteLearner } from "./route-learner.mjs";
 import { RideSimulator } from "./simulator.mjs";
 
 const CSV_FIELDS = [
@@ -36,7 +37,9 @@ const VIRTUAL_INTERFACE = /vEthernet|WSL|Hyper-V|VirtualBox|VMware|Loopback|Tail
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseArgs(process.argv.slice(2));
-const routeProfiles = await RouteProfileCatalogue.load(options.routeCatalogue);
+let routeProfiles = await RouteProfileCatalogue.load(options.routeCatalogue);
+// Adds a route to the catalogue after the rider completes one full, verified lap of it.
+const routeLearner = new RouteLearner({ isKnown: routeId => routeProfiles.routes.has(String(routeId)) });
 let settings = await loadSettings();
 if (options.advertiseIp) settings.advertiseIp = options.advertiseIp;
 if (options.ble === false) settings.bleEnabled = false;
@@ -221,6 +224,10 @@ while (!stopping) {
       ...source
     };
     const row = routeProfiles.enrich(simulated ? base : enrichRoute(base, connection.routeWatcher.state));
+    if (!simulated) {
+      const learned = routeLearner.observe(row);
+      if (learned) await learnRoute(learned);
+    }
     if (!session) session = await openSession(row);
     latestPublished = row;
     await appendFile(session.csv, `${csvRow(row)}\n`);
@@ -243,11 +250,13 @@ while (!stopping) {
   if (options.once && session) stopping = true;
 }
 
+// disconnect() clears the session, so remember the last recording for the closing message.
+const lastSession = session;
 await disconnect();
 await api.close();
 await ble.close();
 await stopLan();
-console.log(session ? `\nSaved ${session.csv}` : "\nNo live PlayerState rows were recorded.");
+console.log(lastSession ? `\nSaved ${lastSession.csv}` : "\nNo live PlayerState rows were recorded.");
 
 async function connect() {
   if (phase === "connecting" || stopped) return;
@@ -365,9 +374,14 @@ function getStatus() {
     rideStatus: live.status,
     dataFresh: Boolean(live.dataFresh),
     routeCatalogueVersion: routeProfiles.version,
+    routeLearning: routeLearner.progress(),
+    routeLearnResult: routeLearner.lastResult,
     catalogueRoutes: [...routeProfiles.routes.values()].map(r => r.routeName),
     routeName: live.routeName ?? null,
-    routeKnown: riding ? live.routeProfileVersion != null : null,
+    routeKnown: riding ? routeProfiles.routes.has(String(live.routeId)) : null,
+    // The position along the route comes from Zwift's Log.txt; without it climb fields stay empty.
+    routePositionKnown: riding ? Number.isFinite(live.routeDistanceM) : null,
+    routeLogPath: options.logPath,
     bleEnabled: settings.bleEnabled,
     bleReady: ble.ready,
     blePhones: ble.subscribers,
@@ -445,11 +459,22 @@ function enrichRoute(row, route) {
     routeName: route.routeName,
     plannedDistanceM,
     plannedElevationGainM: route.plannedAscentM,
+    leadInDistanceM: route.leadInDistanceM,
     routeDistanceM,
     remainingDistanceM,
     routeCheckpoint: route.checkpoint,
     routeCheckpointCount: route.checkpointCount
   };
+}
+
+async function learnRoute(route) {
+  try {
+    await saveRouteToCatalogue(options.routeCatalogue, route);
+    routeProfiles = await RouteProfileCatalogue.load(options.routeCatalogue);
+    console.log(`\nAdded ${route.routeName} to the route catalogue after a full verified lap (v${routeProfiles.version}).`);
+  } catch (error) {
+    console.error(`\nCould not add ${route.routeName} to the route catalogue: ${error.message}`);
+  }
 }
 
 function nextSecond() {

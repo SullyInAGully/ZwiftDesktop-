@@ -15,10 +15,24 @@ test("BLE helper is chosen per platform", () => {
 test("Zwift log path falls back to a OneDrive-redirected Documents folder", () => {
   const home = join("/users", "rider");
   const oneDrive = join(home, "OneDrive");
-  const zwiftUnderOneDrive = path => path === join(oneDrive, "Documents", "Zwift");
+  const zwiftUnderOneDrive = path => path === join(oneDrive, "Documents", "Zwift") ? 1 : null;
   assert.equal(defaultLogPath({ OneDrive: oneDrive }, home, zwiftUnderOneDrive),
     join(oneDrive, "Documents", "Zwift", "Logs", "Log.txt"));
-  assert.equal(defaultLogPath({}, home, () => false), join(home, "Documents", "Zwift", "Logs", "Log.txt"));
+  assert.equal(defaultLogPath({}, home, () => null), join(home, "Documents", "Zwift", "Logs", "Log.txt"));
+});
+
+test("Zwift log path uses current Windows builds' LOCALAPPDATA and prefers the newest log", () => {
+  const home = join("/users", "rider");
+  const local = join(home, "AppData", "Local");
+  const appDataLog = join(local, "Zwift", "Logs", "Log.txt");
+  const documentsLog = join(home, "Documents", "Zwift", "Logs", "Log.txt");
+  // Only the AppData log exists (this is what current Windows Zwift does).
+  assert.equal(defaultLogPath({ LOCALAPPDATA: local }, home, path => path === appDataLog ? 5 : null), appDataLog);
+  // An old install left a Documents log behind, but the AppData one is being written now.
+  const both = path => ({ [appDataLog]: 200, [documentsLog]: 100 })[path] ?? null;
+  assert.equal(defaultLogPath({ LOCALAPPDATA: local }, home, both), appDataLog);
+  // macOS: no LOCALAPPDATA, so Documents as before.
+  assert.equal(defaultLogPath({}, home, path => path === documentsLog ? 1 : null), documentsLog);
 });
 
 test("route log watcher waits for a log file that does not exist yet", async () => {

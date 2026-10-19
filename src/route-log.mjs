@@ -1,19 +1,39 @@
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const DEFAULT_LOG_PATH = defaultLogPath();
 
-/** Zwift writes to Documents/Zwift/Logs; on Windows, Documents is often redirected into OneDrive. */
-export function defaultLogPath(env = process.env, home = homedir(), exists = existsSync) {
-  const documents = [join(home, "Documents")];
+/**
+ * Where Zwift writes Log.txt. Current Windows builds use %LOCALAPPDATA%\Zwift\Logs; older ones and macOS
+ * use Documents/Zwift/Logs, and on Windows Documents is often redirected into OneDrive. When several
+ * exist (an old install left one behind), the most recently written log is the live one.
+ */
+export function defaultLogPath(env = process.env, home = homedir(), modifiedMs = lastModifiedMs) {
+  const zwiftDirs = [];
+  if (env.LOCALAPPDATA) zwiftDirs.push(join(env.LOCALAPPDATA, "Zwift"));
+  zwiftDirs.push(join(home, "Documents", "Zwift"));
   for (const oneDrive of [env.OneDrive, env.OneDriveConsumer, env.OneDriveCommercial]) {
-    if (oneDrive) documents.push(join(oneDrive, "Documents"));
+    if (oneDrive) zwiftDirs.push(join(oneDrive, "Documents", "Zwift"));
   }
-  const logs = documents.map(dir => join(dir, "Zwift", "Logs", "Log.txt"));
-  return logs.find(path => exists(join(path, "..", ".."))) ?? logs[0];
+  const logs = zwiftDirs.map(dir => join(dir, "Logs", "Log.txt"));
+  const newest = logs
+    .map(path => ({ path, modified: modifiedMs(path) }))
+    .filter(x => x.modified != null)
+    .sort((a, b) => b.modified - a.modified)[0];
+  if (newest) return newest.path;
+  // No log yet: wait inside whichever Zwift folder exists, else the classic Documents location.
+  return logs.find(path => modifiedMs(join(path, "..", "..")) != null) ?? join(home, "Documents", "Zwift", "Logs", "Log.txt");
+}
+
+function lastModifiedMs(path) {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
 }
 
 export function createRouteState() {
