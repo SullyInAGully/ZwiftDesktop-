@@ -209,6 +209,10 @@ so `npm run credentials` is no longer needed:
 - **Checklist and live readings:** Zwift connected, data fresh, route in catalogue, Wi-Fi stream (with the
   manual address), phone connected, backup recording, plus the live climb fields.
 
+**Stop everything** (top right) disconnects Zwift, every phone and Bluetooth, and ends any recording or
+simulation, while the dashboard stays up. Your settings and saved login are kept. **Start again** brings
+everything back; **Quit monitor** exits the program.
+
 Settings live in `~/.config/cyclingos-zwift-live/settings.json`. `/status` returns the same data as JSON.
 The control endpoints (`POST /api/*`) only accept JSON requests from this page.
 

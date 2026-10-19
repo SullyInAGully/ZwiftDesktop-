@@ -16,6 +16,9 @@
   main { max-width:880px; margin:0 auto; padding:24px 16px 48px; }
   h1 { font-size:22px; margin:0 0 2px; }
   .sub { color:var(--muted); margin:0 0 20px; }
+  .head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+  .head .sub { margin-bottom:20px; }
+  button.stop { background:var(--bad); border-color:var(--bad); color:#fff; white-space:nowrap; }
   .banner { padding:14px 16px; border-radius:12px; font-weight:600; margin-bottom:20px; border:1px solid var(--line); background:var(--card); }
   .banner.ok { border-color:var(--ok); color:var(--ok); }
   .banner.wait { color:var(--warn); border-color:var(--warn); }
@@ -51,8 +54,9 @@
 </head>
 <body>
 <main>
-  <h1>CyclingOS Zwift Link</h1>
-  <p class="sub" id="sub">Connecting to the monitor…</p>
+  <div class="head"><div><h1>CyclingOS Zwift Link</h1>
+  <p class="sub" id="sub">Connecting to the monitor…</p></div>
+  <button class="stop" id="stopAll">Stop everything</button></div>
   <div class="banner wait" id="banner">Checking…</div>
 
   <section class="card"><h2>Zwift account</h2><div class="pad" id="account"></div></section>
@@ -130,7 +134,11 @@ async function act(name, body = {}) {
 let busy = false, shown = null;
 
 function renderAccount(s) {
-  const key = s.phase + "|" + s.username + "|" + busy;
+  const key = s.phase + "|" + s.username + "|" + busy + "|" + s.stopped;
+  if (s.stopped) {
+    if (key !== shown) { shown = key; $("account").textContent = "Stopped. Press Start again to reconnect to Zwift."; }
+    return;
+  }
   if (key === shown && s.phase !== "connecting") return;
   const typing = document.activeElement?.closest?.("#account");
   if (typing && key.split("|")[0] === (shown || "").split("|")[0]) return;
@@ -202,9 +210,23 @@ function render() {
   $("checks").innerHTML = list.map(c => `<div class="check"><div class="dot ${c.state}">${{ok:"✓",bad:"✕",warn:"!",wait:"…"}[c.state]}</div><div><b>${c.title}</b><span>${c.detail}</span></div></div>`).join("");
   const ready = list.every(c => c.state === "ok");
   const banner = $("banner");
-  const blockers = list.filter(c => c.state !== "ok");
-  banner.className = "banner " + (ready ? "ok" : "wait");
-  banner.textContent = s.simulating && ready ? "Simulated ride running. Data is flowing to your phone." : ready ? "All set. Data is flowing to your phone." : `${blockers.length} step${blockers.length > 1 ? "s" : ""} left: ${blockers.map(b => b.title).join(", ")}`;
+  $("stopAll").hidden = s.stopped;
+  $("sim").disabled = s.stopped;
+  if (s.stopped) {
+    if (!banner.dataset.stopped) {
+      banner.dataset.stopped = "1";
+      banner.className = "banner wait";
+      banner.innerHTML = `Everything is stopped. Zwift, the phone link and Bluetooth are off.
+        <div class="row"><button class="primary" id="startAgain">Start again</button><button class="danger" id="quit">Quit monitor</button></div>`;
+      $("startAgain").onclick = () => act("startAgain");
+      $("quit").onclick = () => confirm("Quit the monitor? You will need to run npm start again to use it.") && act("quit");
+    }
+  } else {
+    delete banner.dataset.stopped;
+    const blockers = list.filter(c => c.state !== "ok");
+    banner.className = "banner " + (ready ? "ok" : "wait");
+    banner.textContent = s.simulating && ready ? "Simulated ride running. Data is flowing to your phone." : ready ? "All set. Data is flowing to your phone." : `${blockers.length} step${blockers.length > 1 ? "s" : ""} left: ${blockers.map(b => b.title).join(", ")}`;
+  }
 
   const l = s.live;
   const tiles = [
@@ -224,6 +246,7 @@ async function poll() {
   render();
 }
 $("sim").onchange = e => act("simulate", { enabled: e.target.checked });
+$("stopAll").onclick = () => confirm("Stop everything? This disconnects Zwift and every phone, and ends any recording or simulation. Your settings are kept.") && act("stopEverything");
 poll(); setInterval(poll, 1000);
 </script>
 </body>

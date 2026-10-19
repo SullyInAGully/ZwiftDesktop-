@@ -54,6 +54,8 @@ let latestSource = null;
 let latestPublished = { status: "waiting", sampledAt: new Date().toISOString() };
 let session = null;
 let simulator = null;
+// "Stop everything" from the dashboard: nothing runs (no Zwift link, phone stream or Bluetooth) until Start again.
+let stopped = false;
 let stopping = false;
 const gradient = new GradientEstimator(5, 5);
 const startedAtMs = Date.now();
@@ -99,7 +101,33 @@ function lanIp() {
 await startLan();
 
 const actions = {
+  /** Disconnects Zwift, the phones and Bluetooth and ends any simulation or recording; the dashboard stays up. */
+  async stopEverything() {
+    stopped = true;
+    simulator = null;
+    session = null;
+    latestPublished = { status: "waiting", sampledAt: new Date().toISOString() };
+    await disconnect();
+    await stopLan();
+    await ble.close();
+    phase = username ? "idle" : "setup";
+    lastError = null;
+    console.log("\nEverything stopped from the dashboard.");
+  },
+  async startAgain() {
+    stopped = false;
+    await startLan();
+    if (settings.bleEnabled) ble.start();
+    console.log("\nStarted again from the dashboard.");
+    if (username) await connect();
+  },
+  /** Ends the whole program; the main loop notices within a second and shuts down cleanly. */
+  async quit() {
+    console.log("\nQuit requested from the dashboard.");
+    stopping = true;
+  },
   async simulate({ enabled }) {
+    if (stopped && enabled) throw new Error("Everything is stopped. Press Start again first.");
     simulator = enabled ? new RideSimulator(routeProfiles) : null;
     session = null;
     latestPublished = { status: "waiting", sampledAt: new Date().toISOString() };
@@ -137,8 +165,8 @@ const actions = {
     const pairingWasRequired = settings.requirePairing;
     settings = await saveSettings(next);
     ble.enabled = settings.bleEnabled;
-    if (settings.bleEnabled) ble.start(); else await ble.close();
-    if (settings.wifiEnabled) await startLan(); else await stopLan();
+    if (settings.bleEnabled && !stopped) ble.start(); else await ble.close();
+    if (settings.wifiEnabled && !stopped) await startLan(); else await stopLan();
     await lan?.setAdvertiseIp(lanIp());
     if (settings.requirePairing !== pairingWasRequired) {
       await lan?.setPairing({ required: settings.requirePairing });
@@ -222,7 +250,7 @@ await stopLan();
 console.log(session ? `\nSaved ${session.csv}` : "\nNo live PlayerState rows were recorded.");
 
 async function connect() {
-  if (phase === "connecting") return;
+  if (phase === "connecting" || stopped) return;
   await disconnect();
   phase = "connecting";
   lastError = null;
@@ -323,6 +351,7 @@ function getStatus() {
     platform: process.platform,
     credentialStore: CREDENTIAL_STORE,
     phase,
+    stopped,
     simulating: Boolean(simulator),
     error: lastError,
     username,
