@@ -12,7 +12,6 @@
     "start:sauce": "node src/sauce-monitor.mjs",
     "route:add": "node tools/build-route-profile.mjs",
     "build:ble": "sh mac-ble/build-universal.sh",
-    "build:ble:win": "node win-ble/build.mjs",
     "test": "node --test",
     "firewall:win": "node tools/windows-firewall.mjs"
   },

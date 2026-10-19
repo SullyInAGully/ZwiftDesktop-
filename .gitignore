@@ -7,3 +7,4 @@ npm-debug.log*
 *.log
 win-ble/bin/
 win-ble/obj/
+dist/

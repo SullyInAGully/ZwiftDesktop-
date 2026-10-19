@@ -1,9 +1,10 @@
-// Windows counterpart of mac-ble/run-helper.sh: runs the committed helper when it matches the
-// source, otherwise builds a local copy with the .NET SDK. stdin/stdout pass straight through.
+// Windows counterpart of mac-ble/run-helper.sh: builds the Bluetooth helper with the .NET 8 SDK on first
+// use (and when its source changes), then runs it. stdin/stdout pass straight through. Bluetooth is an
+// optional legacy transport on Windows; the Wi-Fi stream needs none of this.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { PREBUILT_EXE, PREBUILT_HASH, SOURCES, WIN_BLE_DIR, sourceHash } from "./helper-source.mjs";
+import { SOURCES, WIN_BLE_DIR } from "./helper-source.mjs";
 
 const localDir = join(dirname(WIN_BLE_DIR), ".build", "win-ble");
 const localExe = join(localDir, "CyclingOSZwiftBLE.exe");
@@ -11,16 +12,8 @@ const localExe = join(localDir, "CyclingOSZwiftBLE.exe");
 run(resolveHelper());
 
 function resolveHelper() {
-  const prebuiltHash = existsSync(PREBUILT_HASH) ? readFileSync(PREBUILT_HASH, "utf8").trim() : null;
-  if (existsSync(PREBUILT_EXE) && prebuiltHash === sourceHash()) return PREBUILT_EXE;
-
-  // The source changed (or no prebuilt), so build for this PC. Needs the .NET 8 SDK.
   if (spawnSync("dotnet", ["--list-sdks"], { stdio: "ignore" }).status !== 0) {
-    if (existsSync(PREBUILT_EXE)) {
-      console.error("Warning: Bluetooth helper source changed but the .NET SDK is not installed; using the older prebuilt helper.");
-      return PREBUILT_EXE;
-    }
-    console.error("Bluetooth helper unavailable: install the .NET 8 SDK (winget install Microsoft.DotNet.SDK.8).");
+    console.error("Bluetooth helper unavailable: install the .NET 8 SDK (winget install Microsoft.DotNet.SDK.8), or use the Wi-Fi link instead.");
     process.exit(1);
   }
   const stale = !existsSync(localExe) || SOURCES.some(path => statSync(path).mtimeMs > statSync(localExe).mtimeMs);
