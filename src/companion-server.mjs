@@ -129,13 +129,13 @@ export function normalizeCompanionMessage(message, receivedAtMs = Date.now()) {
     receivedAt: new Date(receivedAtMs).toISOString(),
     athleteId: number(state.athleteId ?? message.athleteId),
     worldTimeMs: number(state.worldTime ?? message.worldTime),
-    elapsedRideSec: number(state.time),
-    powerW: number(state.power),
+    elapsedRideSec: zeroIfAbsent(state.time),
+    powerW: zeroIfAbsent(state.power),
     heartRateBpm: positiveOrNull(state.heartrate),
-    cadenceRpm: state.cadenceUHz == null ? null : Math.round((state.cadenceUHz * 60) / 1_000_000),
-    speedKmh: state.speedUph == null ? null : state.speedUph / 1_000_000,
-    distanceM: number(state.distance),
-    ascentM: number(state.climbing),
+    cadenceRpm: Math.round((zeroIfAbsent(state.cadenceUHz) * 60) / 1_000_000),
+    speedKmh: zeroIfAbsent(state.speedUph) / 1_000_000,
+    distanceM: zeroIfAbsent(state.distance),
+    ascentM: zeroIfAbsent(state.climbing),
     altitudeM,
     rawZ: number(state.z),
     zwiftGrade: number(message.grade),
@@ -145,7 +145,7 @@ export function normalizeCompanionMessage(message, receivedAtMs = Date.now()) {
     routeDecisionIndex: number(state.routeDecisionIndex),
     roadTime: number(state.roadTime),
     lap: number(state.laps),
-    eventDistanceM: state.eventDistanceCm == null ? null : state.eventDistanceCm / 100,
+    eventDistanceM: zeroIfAbsent(state.eventDistanceCm) / 100,
     x: number(state.x),
     y: number(state.y),
     portal: Boolean(state.portal)
@@ -191,6 +191,15 @@ export class CompanionFrameDecoder {
 
 function number(value) {
   return value == null || !Number.isFinite(Number(value)) ? null : Number(value);
+}
+
+/**
+ * Protobuf omits a field whose value is zero, and the decoder keeps defaults off, so a stopped rider
+ * (0 W, 0 km/h, 0 m at the start) arrives as "missing". Inside a real PlayerState message absent means
+ * zero, which must be recorded as 0 rather than as a gap. Heart rate stays optional: 0 means no strap.
+ */
+function zeroIfAbsent(value) {
+  return number(value) ?? 0;
 }
 
 function positiveOrNull(value) {
