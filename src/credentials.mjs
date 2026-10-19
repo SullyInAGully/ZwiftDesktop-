@@ -1,6 +1,6 @@
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
-import { saveCredentials } from "./keychain.mjs";
+import { CREDENTIAL_STORE, saveCredentials } from "./keychain.mjs";
 
 async function hiddenQuestion(prompt) {
   if (!stdin.isTTY) throw new Error("Credential setup must be run in an interactive terminal");
@@ -37,9 +37,9 @@ const rl = createInterface({ input: stdin, output: stdout });
 try {
   const username = await rl.question("Zwift email: ");
   rl.close();
-  const password = await hiddenQuestion("Zwift password (stored in macOS Keychain): ");
+  const password = await hiddenQuestion(`Zwift password (stored in ${CREDENTIAL_STORE}): `);
   await saveCredentials(username, password);
-  console.log("Credentials saved to macOS Keychain.");
+  console.log(`Credentials saved to ${CREDENTIAL_STORE}.`);
 } catch (error) {
   rl.close();
   console.error(error.message);

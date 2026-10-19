@@ -146,11 +146,19 @@ export class ZwiftClient {
 
 async function httpError(response, prefix) {
   const retryAfter = response.headers.get("retry-after");
-  return new ZwiftHttpError(
+  // Keycloak explains auth failures as {"error":"invalid_grant","error_description":"..."}; keep that, never the request.
+  let detail = null;
+  try {
+    detail = JSON.parse(await response.text());
+  } catch {}
+  const reason = detail?.error_description || detail?.error;
+  const error = new ZwiftHttpError(
     response.status,
-    `${prefix} (HTTP ${response.status})`,
+    `${prefix} (HTTP ${response.status}${reason ? `: ${reason}` : ""})`,
     retryAfter ? Number(retryAfter) : null
   );
+  error.code = detail?.error ?? null;
+  return error;
 }
 
 export function normalizePlayerState(raw, sampledAt = new Date()) {

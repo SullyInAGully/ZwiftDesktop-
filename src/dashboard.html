@@ -55,21 +55,23 @@
   <div class="banner wait" id="banner">Checking…</div>
 
   <section class="card"><h2>Zwift account</h2><div class="pad" id="account"></div></section>
-  <section class="card"><h2>Test without Zwift</h2><div class="toggle" style="border:0"><input type="checkbox" id="sim"><div><b>Simulate a ride</b><span>Sends a synthetic 200 W ride on the first catalogued route through the same pipeline: climb engine, Bluetooth, phone and CSV. No Zwift or trainer needed. Rows and files are labelled “simulated”.</span></div></div></section>
+  <section class="card"><h2>Test without Zwift</h2><div class="toggle" style="border:0"><input type="checkbox" id="sim"><div><b>Simulate a ride</b><span>Sends a synthetic 200 W ride on the first catalogued route through the same pipeline: climb engine, Wi-Fi, phone and CSV. No Zwift or trainer needed. Rows and files are labelled “simulated”.</span></div></div></section>
   <section class="card"><h2>Settings</h2><div id="settings"></div></section>
   <section class="card"><h2>Setup checklist</h2><div id="checks"></div></section>
   <section class="card"><h2>Live from Zwift</h2><div class="grid" id="tiles"></div>
     <div class="hint" id="liveHint"></div></section>
   <section class="card"><h2>Phone app steps</h2>
-    <div class="hint">1. Open PolarSDKTest and allow Bluetooth permissions.<br>
-    2. Use the Zwift live scan control; the "Phone connected" check above turns green.<br>
-    3. Start a direct Zwift ride. The phone records the Strava-format CSV.</div></section>
+    <div class="hint">1. Put the phone on the same Wi-Fi network as this computer.<br>
+    2. In the app, open Zwift live and pick “CyclingOS Zwift” (allow local network access when asked), or enter the address shown above.<br>
+    3. The "Phone connected" check turns green. Start a direct Zwift ride; the phone records the Strava-format CSV.</div></section>
 </main>
 <script>
 const $ = id => document.getElementById(id);
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = (v, d = 0) => v == null || Number.isNaN(+v) ? "–" : (+v).toFixed(d);
 let status = null, lastOk = 0;
+const isWin = s => s.platform === "win32";
+const host = s => isWin(s) ? "PC" : "Mac";
 
 function checks(s) {
   const riding = s.rideStatus === "riding";
@@ -94,12 +96,19 @@ function baseChecks(s, riding) {
       detail: s.routeKnown === true ? `${s.routeName}: climb fields are being calculated (catalogue v${s.routeCatalogueVersion}).`
         : s.routeKnown === false ? `${s.routeName ?? "This route"} isn't in the catalogue, so climb columns will be empty. Known routes: ${s.catalogueRoutes.join(", ") || "none"}. Add one with npm run route:add.`
         : `Starts once you're riding. Known routes: ${s.catalogueRoutes.join(", ") || "none"}.` },
-    { state: !s.bleEnabled ? "warn" : s.bleReady ? "ok" : "bad", title: "Bluetooth broadcasting",
-      detail: !s.bleEnabled ? "Disabled with --no-ble." : s.bleReady ? "Advertising as “CyclingOS Zwift”." : (s.bleMessage || "Helper not ready. Check System Settings → Privacy & Security → Bluetooth and that Bluetooth is on.") },
-    { state: !s.bleEnabled ? "wait" : s.blePhones > 0 ? "ok" : "wait", title: "Phone connected",
-      detail: s.blePhones > 0 ? `${s.blePhones} phone${s.blePhones > 1 ? "s" : ""} subscribed and receiving frames.` : "Waiting for the phone app to scan and connect." },
-    { state: s.sessionCsv ? "ok" : "wait", title: "Mac backup recording",
-      detail: s.sessionCsv ? s.sessionCsv.split("/").slice(-2).join("/") : "Starts with the first ride sample." }
+    { state: !s.wifiEnabled ? "bad" : s.lanError ? "bad" : s.lanListening ? "ok" : "wait", title: "Wi-Fi stream for the phone",
+      detail: !s.wifiEnabled ? "Turned off in Settings below. The phone apps need it."
+        : s.lanError ? esc(s.lanError)
+        : s.lanListening ? `Phones on this network find “${esc(s.lanName)}” automatically. If not, enter <code>${esc(s.lanUrl)}</code> in the app.${isWin(s) ? " Windows Firewall must allow Node.js on private networks." : ""}`
+        : "Starting…" },
+    { state: s.lanPhones + (s.bleEnabled ? s.blePhones : 0) > 0 ? "ok" : "wait", title: "Phone connected",
+      detail: s.lanPhones + (s.bleEnabled ? s.blePhones : 0) > 0
+        ? [s.lanPhones && `${s.lanPhones} over Wi-Fi`, s.bleEnabled && s.blePhones && `${s.blePhones} over Bluetooth`].filter(Boolean).join(", ") + ", receiving 1 Hz frames."
+        : "Waiting for the phone app to connect. Phone and this " + host(s) + " must be on the same Wi-Fi network." },
+    ...(s.bleEnabled ? [{ state: s.bleReady ? "ok" : "warn", title: "Bluetooth (legacy, optional)",
+      detail: s.bleReady ? "Also advertising the CyclingOS Zwift Bluetooth service." : esc(s.bleMessage || "Not advertising. Wi-Fi is used instead; you can turn Bluetooth off in Settings.") }] : []),
+    { state: s.sessionCsv ? "ok" : "wait", title: `${host(s)} backup recording`,
+      detail: s.sessionCsv ? s.sessionCsv.split(/[\\/]/).slice(-2).join("/") : "Starts with the first ride sample." }
   ];
 }
 
@@ -127,7 +136,7 @@ function renderAccount(s) {
   const form = `<label for="u">Zwift email</label><input id="u" type="email" autocomplete="username" value="${esc(s.username ?? "")}">
     <label for="p">Zwift password</label><input id="p" type="password" autocomplete="current-password">
     <div class="row"><button class="primary" id="save" ${busy ? "disabled" : ""}>Save &amp; connect</button></div>
-    <div class="hint" style="padding:8px 0 0">Stored in the macOS Keychain on this Mac. It is only used to register this Mac with Zwift.</div>`;
+    <div class="hint" style="padding:8px 0 0">Stored in the ${esc(s.credentialStore)} on this ${host(s)}. It is only used to register this ${host(s)} with Zwift.</div>`;
   const msg = '<div class="msg" id="formMsg"></div>';
   const A = $("account");
   if (s.phase === "setup") A.innerHTML = form + msg;
@@ -139,7 +148,7 @@ function renderAccount(s) {
   on("save", () => act("saveCredentials", { username: $("u").value, password: $("p").value }));
   on("connect", () => act("connect")); on("retry", () => act("connect"));
   on("disconnect", () => act("disconnect"));
-  on("forget", () => confirm("Remove the saved Zwift login from this Mac?") && act("forgetCredentials"));
+  on("forget", () => confirm(`Remove the saved Zwift login from this ${host(s)}?`) && act("forgetCredentials"));
 }
 
 let settingsKey = null;
@@ -149,11 +158,13 @@ function renderSettings(s) {
   settingsKey = key;
   const cfg = s.settings;
   const opts = ['<option value="">Automatic</option>', ...s.interfaces.map(i => `<option value="${i.address}" ${cfg.advertiseIp === i.address ? "selected" : ""}>${esc(i.name)} · ${i.address}</option>`)];
-  if (cfg.advertiseIp && !s.interfaces.some(i => i.address === cfg.advertiseIp)) opts.push(`<option value="${cfg.advertiseIp}" selected>${cfg.advertiseIp} (not on this Mac now)</option>`);
-  $("settings").innerHTML = `<div class="toggle"><input type="checkbox" id="ble" ${cfg.bleEnabled ? "checked" : ""}><div><b>Send data to the phone over Bluetooth</b><span>Advertises “CyclingOS Zwift” for the PolarSDKTest app.</span></div></div>
+  if (cfg.advertiseIp && !s.interfaces.some(i => i.address === cfg.advertiseIp)) opts.push(`<option value="${cfg.advertiseIp}" selected>${cfg.advertiseIp} (not on this ${host(s)} now)</option>`);
+  $("settings").innerHTML = `<div class="toggle"><input type="checkbox" id="wifi" ${cfg.wifiEnabled ? "checked" : ""}><div><b>Send data to the phone over Wi-Fi</b><span>Streams 1 Hz frames on your local network and announces “CyclingOS Zwift” so the phone app finds it.</span></div></div>
+    <div class="toggle"><input type="checkbox" id="ble" ${cfg.bleEnabled ? "checked" : ""}><div><b>Also broadcast over Bluetooth (legacy)</b><span>For older app builds only. Not needed with Wi-Fi${isWin(s) ? ", and many Windows PCs cannot advertise it" : ""}.</span></div></div>
     <div class="toggle"><input type="checkbox" id="auto" ${cfg.autoConnect ? "checked" : ""}><div><b>Connect automatically on launch</b><span>Uses the saved login when the monitor starts.</span></div></div>
     <div class="pad"><label for="ip">Network address Zwift should send data to</label><select id="ip">${opts.join("")}</select>
-    <div class="hint" style="padding:6px 0 0">Choose the Wi-Fi/Ethernet address of this Mac, on the same network as the machine running Zwift. Changing it reconnects.</div></div>`;
+    <div class="hint" style="padding:6px 0 0">Choose the Wi-Fi/Ethernet address of this ${host(s)} on your home network. Zwift and the phone both use it. Changing it reconnects.</div></div>`;
+  $("wifi").onchange = e => act("saveSettings", { wifiEnabled: e.target.checked });
   $("ble").onchange = e => act("saveSettings", { bleEnabled: e.target.checked });
   $("auto").onchange = e => act("saveSettings", { autoConnect: e.target.checked });
   $("ip").onchange = e => act("saveSettings", { advertiseIp: e.target.value || null });

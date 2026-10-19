@@ -5,11 +5,12 @@ import { networkInterfaces } from "node:os";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import { CompanionServer } from "./companion-server.mjs";
-import { BlePeripheralBridge, bleState } from "./ble-peripheral.mjs";
+import { BlePeripheralBridge, bleHelperCommand, bleState } from "./ble-peripheral.mjs";
 import { GradientEstimator } from "./gradient.mjs";
 import {
-  clearCredentials, loadCredentials, loadSettings, saveCredentials, saveSettings, savedUsername
+  CREDENTIAL_STORE, clearCredentials, loadCredentials, loadSettings, saveCredentials, saveSettings, savedUsername
 } from "./keychain.mjs";
+import { startLanStream, LAN_DEFAULT_PORT } from "./lan-stream.mjs";
 import { startLocalServer } from "./local-server.mjs";
 import { DEFAULT_LOG_PATH, RouteLogWatcher } from "./route-log.mjs";
 import { ZwiftClient } from "./zwift-client.mjs";
@@ -29,12 +30,16 @@ const CSV_FIELDS = [
   "nextClimbAvgGradientPct", "nextClimbGainM", "routeProfileVersion"
 ];
 
+// Virtual adapters (Hyper-V/WSL, VPNs, VMs) are never the address the Zwift game can reach.
+const VIRTUAL_INTERFACE = /vEthernet|WSL|Hyper-V|VirtualBox|VMware|Loopback|Tailscale|ZeroTier|utun|bridge|docker/i;
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseArgs(process.argv.slice(2));
 const routeProfiles = await RouteProfileCatalogue.load(options.routeCatalogue);
 let settings = await loadSettings();
 if (options.advertiseIp) settings.advertiseIp = options.advertiseIp;
 if (options.ble === false) settings.bleEnabled = false;
+if (options.wifi === false) settings.wifiEnabled = false;
 
 // Connection state. Everything below the dashboard is started and stopped from the UI.
 let phase = "setup"; // setup | idle | connecting | running | error
@@ -53,13 +58,41 @@ const sessionsDir = join(root, "sessions");
 await mkdir(sessionsDir, { recursive: true });
 
 const ble = new BlePeripheralBridge({
-  helperPath: join(root, "mac-ble", "run-helper.sh"),
+  helper: bleHelperCommand(root),
   enabled: settings.bleEnabled
 });
 ble.on("ready", () => console.log("Bluetooth state service: CyclingOS Zwift"));
 ble.on("log", line => console.log(`Bluetooth: ${line}`));
 ble.on("error", error => console.error(`Bluetooth: ${error.message}`));
 ble.start();
+
+// Wi-Fi link to the phone apps: the primary transport on macOS and Windows.
+let lan = null;
+let lanError = null;
+async function startLan() {
+  if (lan || !settings.wifiEnabled) return;
+  try {
+    lan = await startLanStream({
+      port: options.lanPort,
+      advertiseIp: lanIp(),
+      onError: error => { lanError = error.message; console.error(`Wi-Fi stream: ${error.message}`); }
+    });
+    lanError = null;
+    console.log(`Wi-Fi stream: http://${lanIp() ?? "this-computer"}:${lan.port}/v1/stream (Bonjour “${lan.name}”)`);
+  } catch (error) {
+    lanError = error.code === "EADDRINUSE" ? `Port ${options.lanPort} is in use. Start with --lan-port <other>.` : error.message;
+    console.error(`Wi-Fi stream: ${lanError}`);
+  }
+}
+async function stopLan() {
+  const current = lan;
+  lan = null;
+  await current?.close().catch(() => {});
+}
+function lanIp() {
+  return settings.advertiseIp || selectLanIpv4();
+}
+await startLan();
 
 const actions = {
   async simulate({ enabled }) {
@@ -87,12 +120,15 @@ const actions = {
       ...settings,
       ...(body.advertiseIp !== undefined ? { advertiseIp: validIp(body.advertiseIp) } : {}),
       ...(body.bleEnabled !== undefined ? { bleEnabled: Boolean(body.bleEnabled) } : {}),
+      ...(body.wifiEnabled !== undefined ? { wifiEnabled: Boolean(body.wifiEnabled) } : {}),
       ...(body.autoConnect !== undefined ? { autoConnect: Boolean(body.autoConnect) } : {})
     };
     const addressChanged = next.advertiseIp !== settings.advertiseIp;
     settings = await saveSettings(next);
     ble.enabled = settings.bleEnabled;
     if (settings.bleEnabled) ble.start(); else await ble.close();
+    if (settings.wifiEnabled) await startLan(); else await stopLan();
+    await lan?.setAdvertiseIp(lanIp());
     // The Zwift game only learns the receiver address at registration, so re-register on change.
     if (addressChanged && connection) await connect();
   }
@@ -110,12 +146,13 @@ try {
   });
 } catch (error) {
   await ble.close();
+  await stopLan();
   throw new Error(`Cannot start local API on ${options.apiHost}:${options.apiPort}: ${error.message}`);
 }
 
 const dashboardUrl = `http://${options.apiHost}:${options.apiPort}/`;
 console.log(`Dashboard: ${dashboardUrl}`);
-if (options.open) spawn("open", [dashboardUrl], { stdio: "ignore" }).on("error", () => {}).unref();
+if (options.open) openBrowser(dashboardUrl);
 
 if (username) {
   phase = "idle";
@@ -145,7 +182,9 @@ while (!stopping) {
     latestPublished = row;
     await appendFile(session.csv, `${csvRow(row)}\n`);
     api.publish(row);
-    ble.publish(bleState(row));
+    const frame = bleState(row);
+    ble.publish(frame);
+    lan?.publishFrame(frame);
     show(row);
   } else {
     latestPublished = {
@@ -155,6 +194,7 @@ while (!stopping) {
       dataFresh: false
     };
     api.publish(latestPublished);
+    lan?.publishStatus({ status: latestPublished.status, sampledAtMs, sourceAgeMs });
     show(latestPublished);
   }
   if (options.once && session) stopping = true;
@@ -163,6 +203,7 @@ while (!stopping) {
 await disconnect();
 await api.close();
 await ble.close();
+await stopLan();
 console.log(session ? `\nSaved ${session.csv}` : "\nNo live PlayerState rows were recorded.");
 
 async function connect() {
@@ -237,7 +278,9 @@ async function disconnect() {
 }
 
 function friendlyError(error) {
-  if (error?.status === 401 || error?.status === 403) return "Zwift rejected the email or password.";
+  if (error?.status === 401 || error?.status === 403 || error?.code === "invalid_grant") {
+    return "Zwift rejected the email or password. If you sign in to Zwift with Google, Apple or Facebook, set a Zwift password first at zwift.com.";
+  }
   if (error?.status === 429) return "Zwift is rate limiting logins. Wait a few minutes and try again.";
   if (error?.name === "TimeoutError" || error?.cause?.code === "ENOTFOUND") return "Could not reach Zwift. Check your internet connection.";
   return error?.message || String(error);
@@ -262,6 +305,8 @@ function getStatus() {
   return {
     startedAtMs,
     now: Date.now(),
+    platform: process.platform,
+    credentialStore: CREDENTIAL_STORE,
     phase,
     simulating: Boolean(simulator),
     error: lastError,
@@ -283,6 +328,13 @@ function getStatus() {
     bleReady: ble.ready,
     blePhones: ble.subscribers,
     bleMessage: ble.lastMessage,
+    wifiEnabled: settings.wifiEnabled,
+    lanListening: Boolean(lan),
+    lanAnnounced: Boolean(lan?.announced),
+    lanName: lan?.name ?? null,
+    lanUrl: lan ? `http://${lanIp() ?? "this-computer"}:${lan.port}` : null,
+    lanPhones: lan?.clients ?? 0,
+    lanError,
     sessionCsv: session ? session.csv : null,
     live: riding ? live : null
   };
@@ -314,10 +366,17 @@ function show(row) {
   else console.log(line);
 }
 
+function openBrowser(url) {
+  const [command, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
+    : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
+  spawn(command, args, { stdio: "ignore", windowsHide: true }).on("error", () => {}).unref();
+}
+
 function selectLanIpv4() {
   const all = networkInterfaces();
-  const preferred = ["en0", "en1"];
-  for (const name of [...preferred, ...Object.keys(all)]) {
+  const preferred = ["en0", "en1", "Wi-Fi", "WLAN", "Ethernet"];
+  const physical = Object.keys(all).filter(name => !VIRTUAL_INTERFACE.test(name));
+  for (const name of [...preferred, ...physical, ...Object.keys(all)]) {
     const candidate = all[name]?.find(x => x.family === "IPv4" && !x.internal && !x.address.startsWith("169.254."));
     if (candidate) return candidate.address;
   }
@@ -372,7 +431,9 @@ function parseArgs(args) {
     apiPort: 8787,
     logPath: DEFAULT_LOG_PATH,
     routeCatalogue: join(root, "routes", "catalog-v1.json"),
+    lanPort: LAN_DEFAULT_PORT,
     ble: true,
+    wifi: true,
     open: true,
     once: false
   };
@@ -385,11 +446,13 @@ function parseArgs(args) {
     else if (arg === "--api-port") values.apiPort = Number(args[++i]);
     else if (arg === "--log") values.logPath = resolve(args[++i]);
     else if (arg === "--route-catalogue") values.routeCatalogue = resolve(args[++i]);
+    else if (arg === "--lan-port") values.lanPort = Number(args[++i]);
     else if (arg === "--no-ble") values.ble = false;
+    else if (arg === "--no-wifi") values.wifi = false;
     else if (arg === "--no-open") values.open = false;
     else if (arg === "--once") values.once = true;
     else if (arg === "--help") {
-      console.log("Usage: npm start -- [--advertise-ip IP] [--listen-port PORT] [--api-port 8787] [--route-catalogue PATH] [--no-ble] [--no-open] [--once]");
+      console.log("Usage: npm start -- [--advertise-ip IP] [--listen-port PORT] [--api-port 8787] [--lan-port 8788] [--route-catalogue PATH] [--no-wifi] [--no-ble] [--no-open] [--once]");
       process.exit(0);
     } else throw new Error(`Unknown argument: ${arg}`);
   }

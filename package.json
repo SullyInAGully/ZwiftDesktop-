@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Read-only experimental Zwift PlayerState and route-log monitor for CyclingOS",
+  "description": "Read-only experimental Zwift PlayerState and route-log monitor for CyclingOS (macOS and Windows)",
   "scripts": {
     "credentials": "node src/credentials.mjs",
     "start": "node src/companion-monitor.mjs",
@@ -12,12 +12,15 @@
     "start:sauce": "node src/sauce-monitor.mjs",
     "route:add": "node tools/build-route-profile.mjs",
     "build:ble": "sh mac-ble/build-universal.sh",
-    "test": "node --test"
+    "build:ble:win": "node win-ble/build.mjs",
+    "test": "node --test",
+    "firewall:win": "node tools/windows-firewall.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "bonjour-service": "1.4.4",
     "protobufjs": "8.8.1"
   }
 }
