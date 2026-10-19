@@ -1,4 +1,5 @@
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { networkInterfaces } from "node:os";
@@ -17,6 +18,7 @@ import { DEFAULT_LOG_PATH, RouteLogWatcher } from "./route-log.mjs";
 import { ZwiftClient } from "./zwift-client.mjs";
 import { RouteProfileCatalogue } from "./route-profile.mjs";
 import { RideSimulator } from "./simulator.mjs";
+import { startLogFile } from "./logfile.mjs";
 
 const CSV_FIELDS = [
   "sampledAt", "sampledAtMs", "sourceAgeMs", "dataFresh", "athleteId", "worldTimeMs",
@@ -36,6 +38,8 @@ const VIRTUAL_INTERFACE = /vEthernet|WSL|Hyper-V|VirtualBox|VMware|Loopback|Tail
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseArgs(process.argv.slice(2));
+const logPath = startLogFile();
+const appVersion = await readVersion();
 const routeProfiles = await RouteProfileCatalogue.load(options.routeCatalogue);
 let settings = await loadSettings();
 if (options.advertiseIp) settings.advertiseIp = options.advertiseIp;
@@ -120,6 +124,13 @@ const actions = {
     if (settings.bleEnabled) ble.start();
     console.log("\nStarted again from the dashboard.");
     if (username) await connect();
+  },
+  /** Shows the log file in Finder / Explorer so a rider can send it for support. */
+  async revealLog() {
+    if (!logPath) throw new Error("No log file is available.");
+    const [command, args] = process.platform === "win32" ? ["explorer", [`/select,${logPath}`]]
+      : process.platform === "darwin" ? ["open", ["-R", logPath]] : ["xdg-open", [dirname(logPath)]];
+    spawn(command, args, { stdio: "ignore", windowsHide: true }).on("error", () => {}).unref();
   },
   /** Ends the whole program; the main loop notices within a second and shuts down cleanly. */
   async quit() {
@@ -243,11 +254,12 @@ while (!stopping) {
   if (options.once && session) stopping = true;
 }
 
+const lastSession = session;
 await disconnect();
 await api.close();
 await ble.close();
 await stopLan();
-console.log(session ? `\nSaved ${session.csv}` : "\nNo live PlayerState rows were recorded.");
+console.log(lastSession ? `\nSaved ${lastSession.csv}` : "\nNo live PlayerState rows were recorded.");
 
 async function connect() {
   if (phase === "connecting" || stopped) return;
@@ -320,6 +332,23 @@ async function disconnect() {
   await current.companion.close().catch(() => {});
 }
 
+/** True when Zwift wrote to its log in the last 30 s, i.e. the game is most likely running. */
+function zwiftLogRecent() {
+  try {
+    return Date.now() - statSync(options.logPath).mtimeMs < 30_000;
+  } catch {
+    return false;
+  }
+}
+
+async function readVersion() {
+  try {
+    return (await readFile(join(root, "VERSION"), "utf8")).trim() || "dev";
+  } catch {
+    return "dev";
+  }
+}
+
 function friendlyError(error) {
   if (error?.status === 401 || error?.status === 403 || error?.code === "invalid_grant") {
     return "Zwift rejected the email or password. If you sign in to Zwift with Google, Apple or Facebook, set a Zwift password first at zwift.com.";
@@ -348,6 +377,9 @@ function getStatus() {
   return {
     startedAtMs,
     now: Date.now(),
+    version: appVersion,
+    logPath,
+    zwiftLogRecent: zwiftLogRecent(),
     platform: process.platform,
     credentialStore: CREDENTIAL_STORE,
     phase,
@@ -409,7 +441,7 @@ function show(row) {
     line = `${clock()} Waiting for Zwift game connection…`;
   }
   if (process.stdout.isTTY) process.stdout.write(`\r\u001b[2K${line}`);
-  else console.log(line);
+  else process.stdout.write(`${line}\n`);
 }
 
 function openBrowser(url) {

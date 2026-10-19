@@ -45,6 +45,9 @@
   button.danger { color:var(--bad); }
   button:disabled { opacity:.5; cursor:default; }
   .code { font:700 34px/1.1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; letter-spacing:.08em; margin:4px 0 2px; user-select:all; }
+  .steps { margin:0; padding-left:20px; } .steps li { margin:6px 0; }
+  .foot { color:var(--muted); font-size:12px; margin-top:8px; }
+  .foot a { color:var(--accent); cursor:pointer; text-decoration:underline; }
   .msg { margin-top:10px; font-size:13px; } .msg.bad { color:var(--bad); }
   .toggle { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); }
   .toggle input { width:18px; height:18px; }
@@ -59,6 +62,15 @@
   <button class="stop" id="stopAll">Stop everything</button></div>
   <div class="banner wait" id="banner">Checking…</div>
 
+  <section class="card" id="welcome" hidden><h2>Getting started</h2><div class="pad">
+    <ol class="steps">
+      <li><b>Sign in to Zwift</b> in the box below. Your password stays on this computer.</li>
+      <li><b>Open Zwift and start a ride</b> (any route). If your computer asks whether “node” may accept incoming connections, choose <b>Allow</b>.</li>
+      <li><b>On your phone</b> (same Wi-Fi as this computer): open the CyclingOS app, go to Zwift live, pick this computer and type the pairing code shown below.</li>
+      <li>When the checklist below is green, press <b>Start ride</b> in the phone app.</li>
+    </ol>
+    <div class="hint" style="padding:6px 0 0">Keep the Terminal window open while you ride. Closing it stops the connection.</div>
+    <div class="row"><button id="hideWelcome">Hide this</button></div></div></section>
   <section class="card"><h2>Zwift account</h2><div class="pad" id="account"></div></section>
   <section class="card"><h2>Phone pairing</h2><div class="pad" id="pairing"></div></section>
   <section class="card"><h2>Test without Zwift</h2><div class="toggle" style="border:0"><input type="checkbox" id="sim"><div><b>Simulate a ride</b><span>Sends a synthetic 200 W ride on the first catalogued route through the same pipeline: climb engine, Wi-Fi, phone and CSV. No Zwift or trainer needed. Rows and files are labelled “simulated”.</span></div></div></section>
@@ -70,6 +82,7 @@
     <div class="hint">1. Put the phone on the same Wi-Fi network as this computer.<br>
     2. In the app, open Zwift live and pick “CyclingOS Zwift” (allow local network access when asked), or enter the address shown above.<br>
     3. Enter the pairing code shown above when asked. The "Phone connected" check turns green. Start a direct Zwift ride; the phone records the Strava-format CSV.</div></section>
+<p class="foot" id="foot"></p>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -95,7 +108,9 @@ function baseChecks(s, riding) {
       detail: s.phase === "running" ? `${esc(s.athleteName || s.username)} · receiver ${s.advertiseIp}:${s.companionPort}`
         : s.phase === "error" ? s.error : s.phase === "connecting" ? "Signing in…" : s.phase === "idle" ? "Press Connect above." : "Enter your Zwift login above." },
     { state: s.zwiftConnected ? "ok" : "wait", title: "Zwift game connected",
-      detail: s.zwiftConnected ? "Receiving PlayerState from the game." : "Waiting. Start Zwift and begin a ride; if it never connects, restart the Zwift game once." },
+      detail: s.zwiftConnected ? "Receiving PlayerState from the game."
+        : s.zwiftLogRecent ? "Zwift is open. Start a ride. If this still says waiting after a minute, quit Zwift completely and open it again."
+        : "Zwift doesn't seem to be open. Open Zwift and start a ride." },
     { state: riding && s.dataFresh ? "ok" : (s.zwiftConnected ? "warn" : "wait"), title: "Live data is fresh",
       detail: riding && s.dataFresh ? "1 Hz samples are flowing." : "No fresh rider data yet. Pedal in Zwift (not paused or in the menu)." },
     { state: s.routeKnown === true ? "ok" : (s.routeKnown === false ? "warn" : "wait"), title: "Route recognised for climb data",
@@ -105,7 +120,7 @@ function baseChecks(s, riding) {
     { state: !s.wifiEnabled ? "bad" : s.lanError ? "bad" : s.lanListening ? "ok" : "wait", title: "Wi-Fi stream for the phone",
       detail: !s.wifiEnabled ? "Turned off in Settings below. The phone apps need it."
         : s.lanError ? esc(s.lanError)
-        : s.lanListening ? `Phones on this network find “${esc(s.lanName)}” automatically. If not, enter <code>${esc(s.lanUrl)}</code> in the app.${isWin(s) ? " Windows Firewall must allow Node.js on private networks." : ""}`
+        : s.lanListening ? `Phones on this network find “${esc(s.lanName)}” automatically. If not, enter <code>${esc(s.lanUrl)}</code> in the app.${isWin(s) ? " Windows Firewall must allow Node.js on private networks." : " If macOS asked whether “node” may accept incoming connections and you chose Deny, open System Settings → Network → Firewall → Options and set node to Allow."}`
         : "Starting…" },
     { state: s.lanPhones + (s.bleEnabled ? s.blePhones : 0) > 0 ? "ok" : "wait", title: "Phone connected",
       detail: s.lanPhones + (s.bleEnabled ? s.blePhones : 0) > 0
@@ -161,7 +176,7 @@ function renderAccount(s) {
   on("forget", () => confirm(`Remove the saved Zwift login from this ${host(s)}?`) && act("forgetCredentials"));
 }
 
-let pairingKey = null;
+let pairingKey = null, footHtml = null;
 function renderPairing(s) {
   const key = JSON.stringify([s.pairingRequired, s.pairingCode]);
   if (key === pairingKey) return;
@@ -199,10 +214,21 @@ function renderSettings(s) {
   $("ip").onchange = e => act("saveSettings", { advertiseIp: e.target.value || null });
 }
 
+function welcomeHidden() {
+  try { return localStorage.getItem("hideWelcome") === "1"; } catch { return false; }
+}
+
 function render() {
   const s = status;
   if (!s) return;
   renderAccount(s); renderPairing(s); renderSettings(s);
+  $("welcome").hidden = welcomeHidden();
+  const foot = `Version ${esc(s.version)}${s.logPath ? ` · <a id="showLog">Show log file</a> (send it if something goes wrong)` : ""}`;
+  if (foot !== footHtml) {
+    footHtml = foot;
+    $("foot").innerHTML = foot;
+    if ($("showLog")) $("showLog").onclick = () => act("revealLog");
+  }
   if ($("sim").checked !== s.simulating && !busy) $("sim").checked = s.simulating;
   const stale = Date.now() - lastOk > 5000;
   $("sub").textContent = stale ? "Monitor not responding. Is `npm start` still running?" : `Up ${Math.round((s.now - s.startedAtMs) / 60000)} min`;
@@ -246,6 +272,7 @@ async function poll() {
   render();
 }
 $("sim").onchange = e => act("simulate", { enabled: e.target.checked });
+$("hideWelcome").onclick = () => { try { localStorage.setItem("hideWelcome", "1"); } catch {} render(); };
 $("stopAll").onclick = () => confirm("Stop everything? This disconnects Zwift and every phone, and ends any recording or simulation. Your settings are kept.") && act("stopEverything");
 poll(); setInterval(poll, 1000);
 </script>

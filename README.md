@@ -227,3 +227,14 @@ vector for phone developers are in `docs/phone-prompts/`.
 
 Pairing protects against other devices on the network using the stream. The stream itself is still plain
 HTTP, so it does not hide ride data from someone who can already capture traffic on your Wi-Fi.
+
+## Rider package for Intel Macs
+
+`npm run package:mac` builds `dist/CyclingOS-Zwift-Link-Mac-Intel.zip` (about 39 MB): the monitor, its
+production dependencies, a pinned and checksum-verified Intel Node.js, a double-click `Start Zwift Link.command`
+and a `START HERE.txt` for the rider. Riders install nothing. It needs a Mac with network access to build, and
+the pinned Node version is set in `tools/package-mac.mjs`. Share the zip however you like (for example Google
+Drive); the rider right-clicks the launcher and chooses Open the first time, and macOS asks once to allow
+incoming connections for `node`. The monitor writes a log to `~/Library/Logs/CyclingOS Zwift Link/monitor.log`,
+which the dashboard's "Show log file" link reveals so a rider can send it to you. The zip is unsigned and
+un-notarised, so macOS shows the "cannot verify the developer" prompt on first open.

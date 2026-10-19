@@ -1,0 +1,34 @@
+CYCLINGOS ZWIFT LINK: SETUP (about 5 minutes, once)
+
+You need: your Mac, Zwift on the same Mac, your phone with the CyclingOS app, and both on the same Wi-Fi.
+
+1. UNZIP
+   Double-click the zip you downloaded. Move the new folder "CyclingOS Zwift Link" to your Desktop.
+
+2. FIRST OPEN (this is the only awkward part)
+   Open the folder. RIGHT-CLICK (or hold Control and click) "Start Zwift Link", choose Open,
+   then click Open again in the box that appears.
+   macOS asks this once because the program was not downloaded from the App Store. It is safe.
+   If macOS asks to let Terminal access your Desktop or Downloads, click OK.
+
+3. A Terminal window opens, then a web page (the "dashboard"). Keep the Terminal window open.
+   If macOS asks whether "node" may accept incoming connections, click ALLOW.
+   (If you clicked Deny by mistake: System Settings > Network > Firewall > Options, set node to Allow.)
+
+4. SIGN IN
+   In the dashboard, type your Zwift email and password under "Zwift account" and click Save & connect.
+   They are stored only on this Mac.
+
+5. START ZWIFT
+   Open Zwift and start a ride. The dashboard checklist turns green as things connect.
+   If it still says "waiting" after a minute, quit Zwift completely and open it again.
+
+6. CONNECT YOUR PHONE
+   Phone on the same Wi-Fi. Open the CyclingOS app > Zwift live > choose your Mac.
+   Type the pairing code shown on the dashboard (under "Phone pairing"), then press Start ride.
+
+NEXT TIME: just double-click "Start Zwift Link" (no right-click needed), open Zwift, ride.
+
+IF SOMETHING GOES WRONG
+   On the dashboard, click "Show log file" at the bottom and send that file to the person who gave you this.
+   To stop everything at any time, click the red "Stop everything" button.

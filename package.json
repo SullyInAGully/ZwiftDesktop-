@@ -13,7 +13,8 @@
     "route:add": "node tools/build-route-profile.mjs",
     "build:ble": "sh mac-ble/build-universal.sh",
     "test": "node --test",
-    "firewall:win": "node tools/windows-firewall.mjs"
+    "firewall:win": "node tools/windows-firewall.mjs",
+    "package:mac": "node tools/package-mac.mjs"
   },
   "engines": {
     "node": ">=20"
