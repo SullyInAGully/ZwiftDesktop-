@@ -5,3 +5,6 @@ sessions/
 npm-debug.log*
 .env
 *.log
+win-ble/bin/
+win-ble/obj/
+dist/

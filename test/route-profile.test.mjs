@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { RouteProfileCatalogue } from "../src/route-profile.mjs";
 import { bleState } from "../src/ble-peripheral.mjs";
+import { fileURLToPath } from "node:url";
 
 const catalogue = new RouteProfileCatalogue({
   schemaVersion: 1,
@@ -52,7 +53,7 @@ test("BLE projection excludes athlete/account identifiers", () => {
 
 test("simulated ride follows the catalogued route and produces climb fields", async () => {
   const { RideSimulator } = await import("../src/simulator.mjs");
-  const catalogue = await RouteProfileCatalogue.load(new URL("../routes/catalog-v1.json", import.meta.url).pathname);
+  const catalogue = await RouteProfileCatalogue.load(fileURLToPath(new URL("../routes/catalog-v1.json", import.meta.url)));
   const sim = new RideSimulator(catalogue);
   let row;
   for (let t = 0; t < 120; t += 1) row = catalogue.enrich({ ...sim.next(1000 + t * 1000), status: "riding" });

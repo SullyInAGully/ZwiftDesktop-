@@ -1,14 +1,23 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
+import process from "node:process";
 
 export const ZWIFT_LIVE_SERVICE_UUID = "8E6F1000-7A95-4A7F-A8D9-4F6E9A1C2100";
 export const ZWIFT_LIVE_STATE_UUID = "8E6F1001-7A95-4A7F-A8D9-4F6E9A1C2100";
 
-/** Feeds 1 Hz JSON to the native CoreBluetooth peripheral helper over stdin. */
+/** The native peripheral helper for this OS: CoreBluetooth on macOS, WinRT GATT server on Windows. */
+export function bleHelperCommand(root, platform = process.platform) {
+  if (platform === "darwin") return { command: "sh", args: [join(root, "mac-ble", "run-helper.sh")] };
+  if (platform === "win32") return { command: process.execPath, args: [join(root, "win-ble", "run-helper.mjs")] };
+  return null;
+}
+
+/** Feeds 1 Hz JSON to the native BLE peripheral helper over stdin. */
 export class BlePeripheralBridge extends EventEmitter {
-  constructor({ helperPath, enabled = true }) {
+  constructor({ helper, enabled = true }) {
     super();
-    this.helperPath = helperPath;
+    this.helper = helper;
     this.enabled = enabled;
     this.child = null;
     this.ready = false;
@@ -18,8 +27,13 @@ export class BlePeripheralBridge extends EventEmitter {
 
   start() {
     if (!this.enabled || this.child) return;
-    const child = spawn(this.helperPath, [], {
-      stdio: ["pipe", "pipe", "pipe"]
+    if (!this.helper) {
+      this.lastMessage = `Bluetooth is not supported on ${process.platform}.`;
+      return;
+    }
+    const child = spawn(this.helper.command, this.helper.args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true
     });
     this.child = child;
     child.stdout.setEncoding("utf8");
@@ -50,7 +64,7 @@ export class BlePeripheralBridge extends EventEmitter {
       if (this.child === child) this.child = null;
       this.ready = false;
       this.subscribers = 0;
-      if (code && code !== 0) this.emit("error", new Error(`BLE helper exited with code ${code}`));
+      if (code && code !== 0 && !child.closing) this.emit("error", new Error(`BLE helper exited with code ${code}`));
     });
   }
 
@@ -62,6 +76,7 @@ export class BlePeripheralBridge extends EventEmitter {
   async close() {
     const child = this.child;
     if (!child) return;
+    child.closing = true;
     child.stdin.end();
     await new Promise(resolve => {
       const timeout = setTimeout(() => { child.kill("SIGTERM"); resolve(); }, 2000);

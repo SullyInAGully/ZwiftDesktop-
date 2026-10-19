@@ -51,20 +51,22 @@ on HTTP 429, and reduces polling to every 30 seconds after repeated 404 response
 
 ## Requirements
 
-- macOS
+- macOS 11+ or Windows 10 (1809)+ / Windows 11
 - Node.js 20 or newer
-- Zwift installed on the same Mac
+- Zwift installed on the same computer
+- The phone on the same Wi-Fi/LAN as the computer
 
 ## Install
 
 ```bash
-cd /Users/joshuamilsom/AndroidStudioProjects/ZwiftLivePrototype
+cd ZwiftDesktop-
 npm install
 npm run credentials
 ```
 
 The email is saved in a mode-`0600` config file. The password is stored in macOS Keychain under
-`CyclingOS Zwift Live Prototype`; it is not stored in this project or written to telemetry logs.
+`CyclingOS Zwift Live Prototype` (on Windows, DPAPI-encrypted for the current user); it is not stored
+in this project or written to telemetry logs.
 
 ## Legacy private-relay experiment
 
@@ -116,15 +118,59 @@ not expose the account/session and the prototype should not be treated as a prod
 
 ## Security
 
-The local server binds only to `127.0.0.1` by default. Do not bind it to `0.0.0.0` on an untrusted
-network. Access and refresh tokens remain in memory and are never printed or persisted.
+The dashboard and control API bind only to `127.0.0.1` by default. Do not bind them to `0.0.0.0` on an
+untrusted network. Access and refresh tokens remain in memory and are never printed or persisted.
 
-## Bluetooth link to the CyclingOS phone app
+The Wi-Fi phone stream (port 8788) is the only thing reachable from the network. It is read-only
+(GET only), serves the same account-free frames the BLE link carried, and has no control endpoints.
+Anyone on the same network can read the live ride frames, as anyone in Bluetooth range could before;
+use it on a home network, not public Wi-Fi.
 
-`npm start` also advertises a BLE GATT service (`8E6F1000-7A95-4A7F-A8D9-4F6E9A1C2100`, state
+## Wi-Fi link to the CyclingOS phone apps
+
+`npm start` streams one enriched 1 Hz JSON frame per second to the Android and iOS apps over the local
+network, on macOS and Windows alike. Frames are the same schema v1 the BLE link carried (`bleState` in
+`src/ble-peripheral.mjs`), so account IDs never cross this link. Pass `--no-wifi` to disable it.
+
+- **Discovery:** Bonjour/DNS-SD service `_cyclingos-zwift._tcp`, instance `CyclingOS Zwift (<computer name>)`,
+  TXT `v=1`, `schema=1`, `path=/v1/stream`, `ip=<preferred LAN IPv4>`. Phones should connect to the TXT `ip`
+  (the resolved host address may belong to a VPN or virtual adapter). The dashboard also shows the
+  address for manual entry, e.g. `http://192.168.0.35:8788`.
+- **`GET /v1/info`:** `{"service":"cyclingos-zwift","protocolVersion":1,"schemaVersion":1,"name":…,"streamPath":"/v1/stream"}`.
+- **`GET /v1/stream`:** Server-Sent Events. Exactly one event per second:
+  `event: frame` (with an increasing `id`) carrying the schema v1 frame while riding, otherwise
+  `event: status` with `{"schemaVersion":1,"status":"waiting"|"stale","dataFresh":false,"sampledAtMs":…,"sourceAgeMs":…}`.
+  More than 5 s without an event means the link is down; reconnect.
+- **`GET /v1/state`:** the latest event as JSON, `{"event":"frame"|"status", …}`.
+
+Port 8788 by default (`--lan-port`). Try it with `curl -N http://<computer-ip>:8788/v1/stream`, and turn
+on **Simulate a ride** in the dashboard to stream frames without Zwift.
+
+**Windows firewall:** run `npm run firewall:win` once (it asks for administrator approval). It allows
+only `node.exe`, only on **Private** networks, on TCP 8788 and UDP 5353 (Bonjour). Make sure Windows
+treats your home network as Private (Settings → Network & internet → your connection).
+**macOS:** if the firewall is on, allow incoming connections for `node` when asked.
+
+On the phone, open Zwift live and pick “CyclingOS Zwift” (or enter the address), then start a direct
+Zwift ride. The phone records the normal Strava-format CSV as before.
+
+### Windows notes
+
+- **Password storage:** the Zwift password is encrypted with Windows DPAPI for the current Windows
+  user (`%USERPROFILE%.configcyclingos-zwift-livepassword.dpapi`). It can only be decrypted by
+  that user on that PC.
+- **Zwift log:** read from `DocumentsZwiftLogsLog.txt`, including OneDrive-redirected Documents
+  folders; the monitor waits for it to appear. Pass `--log PATH` if Zwift keeps it elsewhere.
+
+Add routes to `routes/catalog-v1.json` with `npm run route:add -- <recording.csv>` after riding
+them. Unknown routes leave climb fields empty rather than guessing.
+
+## Bluetooth link (legacy, opt-in)
+
+With **Also broadcast over Bluetooth (legacy)** turned on in the dashboard, `npm start` also advertises a BLE GATT service (`8E6F1000-7A95-4A7F-A8D9-4F6E9A1C2100`, state
 characteristic `8E6F1001-…`, read + notify) carrying one enriched 1 Hz JSON frame per second
 (schema v1, chunked with an 11-byte header: `"CZ"`, version, u32 sequence, u16 index, u16 count).
-Account IDs never cross this link. Pass `--no-ble` to disable it.
+Account IDs never cross this link. It is off by default; Wi-Fi replaced it on both platforms. `--no-ble` forces it off.
 
 The native helper in `mac-ble/` ships as a prebuilt, ad-hoc-signed **universal app**
 (`mac-ble/prebuilt/CyclingOSZwiftBLE.app`, Apple Silicon and Intel, macOS 11 or newer), so riders'
@@ -135,21 +181,49 @@ Command Line Tools are installed and otherwise keeps using the prebuilt one with
 After editing `mac-ble/ZwiftLivePeripheral.swift` or `Info.plist`, run `npm run build:ble` on a Mac
 (Xcode or Command Line Tools) and commit `mac-ble/prebuilt`. Windows cannot build this helper.
 
-On the phone, use the Zwift live scan control, then start a direct Zwift ride. The phone's
-`ZwiftLiveBleClient` feeds `SessionManager`, and `CsvExporter` writes the normal Strava-format CSV.
+### Windows BLE helper
 
-Add routes to `routes/catalog-v1.json` with `npm run route:add -- <recording.csv>` after riding
-them. Unknown routes leave climb fields empty rather than guessing.
+On Windows the same GATT service, characteristic and chunk format are served by `win-ble/`, a C#
+WinRT `GattServiceProvider` helper. No executable is committed: the first time Bluetooth is enabled,
+`win-ble/run-helper.mjs` builds it into `.build/` with the .NET 8 SDK
+(`winget install Microsoft.DotNet.SDK.8`), and rebuilds when the source changes. Wi-Fi, the default,
+needs none of this.
+
+BLE on Windows:
+
+- **Advertised name:** Windows does not let apps set the BLE local name, so the PC advertises under
+  its own Bluetooth name. The phone must find it by the service UUID, not by the name “CyclingOS Zwift”.
+- **Discoverability:** if the adapter refuses general-discoverable GATT advertising, the helper falls
+  back to plain connectable advertising, which Android scanners filtering by service UUID still see.
+- **Advertising not confirmed:** on some PCs (seen on Windows 11 build 26200 with an Intel AX210) Windows never
+  starts GATT advertising for an unpackaged app, so phones cannot see the PC. This is why Wi-Fi is the default.
 
 ## Setup dashboard
 
 `npm start` opens http://127.0.0.1:8787/ (pass `--no-open` to skip). Everything is configured there,
 so `npm run credentials` is no longer needed:
 
-- **Zwift account:** enter your login once (stored in the macOS Keychain), then Connect, Disconnect or Forget.
-- **Settings:** Bluetooth on/off, connect-on-launch, and which network address Zwift should send data to.
-- **Checklist and live readings:** Zwift connected, data fresh, route in catalogue, Bluetooth advertising,
-  phone connected, backup recording, plus the live climb fields.
+- **Zwift account:** enter your login once (stored in the macOS Keychain, or DPAPI-encrypted on Windows), then Connect, Disconnect or Forget.
+- **Settings:** Wi-Fi stream on/off, legacy Bluetooth on/off, connect-on-launch, and which network address
+  Zwift and the phone use.
+- **Checklist and live readings:** Zwift connected, data fresh, route in catalogue, Wi-Fi stream (with the
+  manual address), phone connected, backup recording, plus the live climb fields.
+
+**Stop everything** (top right) disconnects Zwift, every phone and Bluetooth, and ends any recording or
+simulation, while the dashboard stays up. Your settings and saved login are kept. **Start again** brings
+everything back; **Quit monitor** exits the program.
 
 Settings live in `~/.config/cyclingos-zwift-live/settings.json`. `/status` returns the same data as JSON.
 The control endpoints (`POST /api/*`) only accept JSON requests from this page.
+
+## Phone pairing code
+
+The Wi-Fi stream is closed to anyone without the pairing code shown in the dashboard's **Phone pairing**
+card (8 characters, created on first run and kept in `settings.json`, mode `0600`). The phone fetches a
+single-use challenge and answers with an HMAC keyed by the code, so the code never crosses the network and a
+captured answer cannot be replayed. Five wrong answers lock that address out for a minute. **New code** in the
+dashboard disconnects every paired phone; pairing can be switched off there for testing. Details and a test
+vector for phone developers are in `docs/phone-prompts/`.
+
+Pairing protects against other devices on the network using the stream. The stream itself is still plain
+HTTP, so it does not hide ride data from someone who can already capture traffic on your Wi-Fi.

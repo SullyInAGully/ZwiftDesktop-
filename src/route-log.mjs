@@ -1,7 +1,20 @@
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import { open, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-export const DEFAULT_LOG_PATH = `${process.env.HOME}/Documents/Zwift/Logs/Log.txt`;
+export const DEFAULT_LOG_PATH = defaultLogPath();
+
+/** Zwift writes to Documents/Zwift/Logs; on Windows, Documents is often redirected into OneDrive. */
+export function defaultLogPath(env = process.env, home = homedir(), exists = existsSync) {
+  const documents = [join(home, "Documents")];
+  for (const oneDrive of [env.OneDrive, env.OneDriveConsumer, env.OneDriveCommercial]) {
+    if (oneDrive) documents.push(join(oneDrive, "Documents"));
+  }
+  const logs = documents.map(dir => join(dir, "Zwift", "Logs", "Log.txt"));
+  return logs.find(path => exists(join(path, "..", ".."))) ?? logs[0];
+}
 
 export function createRouteState() {
   return {
@@ -71,7 +84,16 @@ export class RouteLogWatcher extends EventEmitter {
     if (this.reading) return;
     this.reading = true;
     try {
-      const info = await stat(this.path);
+      let info;
+      try {
+        info = await stat(this.path);
+      } catch (error) {
+        // Zwift creates Documents/Zwift/Logs on its first launch; keep polling until the log appears.
+        if (error.code !== "ENOENT") throw error;
+        this.offset = 0;
+        this.remainder = "";
+        return;
+      }
       if (info.size < this.offset) {
         this.offset = 0;
         this.remainder = "";

@@ -54,3 +54,19 @@ test("normalizes direct Companion PlayerState units", () => {
   assert.equal(row.altitudeM, 16.725);
   assert.equal(row.eventDistanceM, 5432.1);
 });
+
+test("a stopped rider is recorded as zeros, not gaps, and no strap stays empty", () => {
+  // Protobuf leaves out zero-valued fields, so a coasting rider's message has no power/speed/cadence/distance.
+  const row = normalizeCompanionMessage({
+    playerState: { athleteId: 42, worldTime: 123, z: 12345, courseId: 6, routeId: 99, eventDistanceCm: 130 }
+  }, 1000);
+
+  assert.equal(row.powerW, 0);
+  assert.equal(row.speedKmh, 0);
+  assert.equal(row.cadenceRpm, 0);
+  assert.equal(row.distanceM, 0);
+  assert.equal(row.ascentM, 0);
+  assert.equal(row.elapsedRideSec, 0);
+  assert.equal(row.eventDistanceM, 1.3);
+  assert.equal(row.heartRateBpm, null, "0 means no heart rate strap, not 0 bpm");
+});

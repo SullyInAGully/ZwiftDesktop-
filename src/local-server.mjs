@@ -7,6 +7,9 @@ export async function startLocalServer({ host = "127.0.0.1", port = 8765, getSta
   const clients = new Set();
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host || `${host}:${port}`}`);
+    // Every route can reveal ride data or the pairing code, so a request must name this server as its
+    // Host. A web page that rebinds its own DNS name to 127.0.0.1 arrives with a foreign Host and is refused.
+    if (!hostAllowed(request.headers.host)) return sendJson(response, 403, { error: "Forbidden" });
     if (url.pathname === "/" || url.pathname === "/index.html") {
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
       return response.end(await readFile(DASHBOARD_PATH));
@@ -29,6 +32,11 @@ export async function startLocalServer({ host = "127.0.0.1", port = 8765, getSta
     }
     sendJson(response, 404, { error: "Use /, /status, /state, /events or /health" });
   });
+
+  function hostAllowed(value) {
+    const actual = server.address()?.port ?? port;
+    return new Set([`127.0.0.1:${actual}`, `localhost:${actual}`, `${host}:${actual}`, `[::1]:${actual}`]).has(value);
+  }
 
   async function handleAction(request, response, url) {
     const action = url.pathname.slice(5);
