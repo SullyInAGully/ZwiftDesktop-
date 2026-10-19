@@ -8,13 +8,36 @@ Discovery: DNS-SD/Bonjour service type `_cyclingos-zwift._tcp` in `local.`
 - Connect to `http://<txt ip>:<service port><txt path>`. Prefer the TXT `ip`; the resolved host address can belong to a VPN/virtual adapter. Fall back to the resolved address only if `ip` is missing.
 - Default port 8788. Users can also type an address manually, e.g. `http://192.168.0.35:8788`.
 
-HTTP endpoints (cleartext HTTP on the LAN, GET only):
+HTTP endpoints (cleartext HTTP on the LAN, GET only; see Pairing code below):
 - `GET /v1/info` → `{"service":"cyclingos-zwift","protocolVersion":1,"schemaVersion":1,"name":"CyclingOS Zwift (HOST)","streamPath":"/v1/stream"}`. Use it to validate a manually entered address (`service` must equal `cyclingos-zwift`, `protocolVersion` must be 1).
 - `GET /v1/stream` → Server-Sent Events (`text/event-stream`). The server sends `retry: 2000` first, then exactly one event per second:
   - `event: frame`, `id: <increasing integer>`, `data: <schema v1 JSON>` while the rider is riding. This JSON is byte-for-byte the same object the BLE link carried after reassembling the "CZ" chunks: `schemaVersion`, `sampledAtMs`, `sourceAgeMs`, `dataFresh`, `elapsedRideSec`, `powerW`, `heartRateBpm`, `cadenceRpm`, `speedKmh`, `distanceM`, `ascentM`, `altitudeM`, `gradientPct`, `courseId`, `routeId`, `routeName`, `plannedDistanceM`, `plannedElevationGainM`, `routeDistanceM`, `remainingDistanceM`, `terrain`, `onClimb`, `climbCategory`, `distanceToNextClimbM`, `distanceToSummitM`, `remainingElevationGainM`, `activeClimbIndex`, `activeClimbLengthM`, `activeClimbAvgGradientPct`, `activeClimbGainM`, `nextClimbLengthM`, `nextClimbAvgGradientPct`, `nextClimbGainM`, `routeProfileVersion`, `routeCheckpoint`, `routeCheckpointCount`, `lap`. Any field may be null.
   - `event: status`, `data: {"schemaVersion":1,"status":"waiting"|"stale","dataFresh":false,"sampledAtMs":…,"sourceAgeMs":…}` when there is no fresh ride data ("waiting" = Zwift not connected, "stale" = connected but not riding/paused).
   - Treat more than 5 s without any event as a dead link: close and reconnect with backoff (2 s, then up to 10 s), resuming automatically.
 - `GET /v1/state` → the latest event as one JSON object, `{"event":"frame"|"status", …}`.
+
+## Pairing code (required by default)
+
+The desktop dashboard shows an 8-character pairing code (e.g. `K7QP-3MXD`). Without it `/v1/stream` and `/v1/state` return 401. `/v1/info` and `/v1/challenge` stay open. The code is never sent over the network; the phone proves it knows it with an HMAC over a single-use nonce.
+
+Discovery: `/v1/info` has `"pairingRequired": true|false`, and the Bonjour TXT record has `auth=1|0`. If pairing is not required, skip everything below.
+
+Handshake, repeated for **every** connection and reconnect (a nonce is single use and expires after 30 s):
+1. `GET /v1/challenge` → `{"nonce":"<32 lowercase hex chars>","expiresInSec":30}`
+2. `proof = lowercase hex of HMAC-SHA256(key = UTF-8 bytes of the normalized code, message = UTF-8 bytes of the nonce string)`. Normalize the code by uppercasing and removing everything except A-Z and 0-9 (so `k7qp-3mxd` and `K7QP3MXD` are the same key). Use the nonce as the 32-character hex *text*, not decoded bytes.
+3. `GET /v1/stream` (or `/v1/state`) with header `Authorization: CyclingOS <nonce>:<proof>`.
+
+Responses: `401` with `{"error":"pairing_required"|"bad_proof"|"stale_challenge"}` and `WWW-Authenticate: CyclingOS`; `429` with `Retry-After: <seconds>` after 5 wrong proofs from one address in a minute (locked out for 60 s); `503` `busy` from `/v1/challenge` when too many challenges are outstanding.
+
+Client behaviour:
+- Ask for the code the first time (one field, tolerant of case, spaces and a dash; valid characters are `23456789ABCDEFGHJKMNPQRSTWXYZ`, 8 long) and store it in the Keystore-backed encrypted preferences, alongside the remembered computer.
+- `bad_proof` right after entering the code means a wrong code: clear it and ask again, with a clear message. Do **not** keep retrying a wrong code, because repeated failures lock the phone out for a minute.
+- `bad_proof` on a stored code means the desktop generated a new code ("New code" in its dashboard): ask for the new one.
+- `stale_challenge` just means the nonce expired or was reused: fetch a fresh challenge and retry once.
+- On `429`, wait for `Retry-After` and show "Too many attempts".
+- A silent reconnect (watchdog, Wi-Fi drop) repeats steps 1-3 with the stored code and needs no input from the rider.
+
+Test vector (unit-test your HMAC against it): code `K7QP3MXD`, nonce `00112233445566778899aabbccddeeff` → proof `cfc77fd341d06d003cf6517ad8b95c2ee77faaae8e9c7f5cf470d5aa6d5fdbb4`.
 
 ## What to build
 

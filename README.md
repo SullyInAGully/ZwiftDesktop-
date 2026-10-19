@@ -184,11 +184,10 @@ After editing `mac-ble/ZwiftLivePeripheral.swift` or `Info.plist`, run `npm run 
 ### Windows BLE helper
 
 On Windows the same GATT service, characteristic and chunk format are served by `win-ble/`, a C#
-WinRT `GattServiceProvider` helper. It ships as a prebuilt, trimmed, self-contained x64 exe
-(`win-ble/prebuilt/CyclingOSZwiftBLE.exe`), so riders' PCs need neither the .NET SDK nor the runtime.
-If the helper source changes, `win-ble/run-helper.mjs` builds a local copy with the .NET 8 SDK when it
-is installed and otherwise keeps using the prebuilt one with a warning. After editing
-`win-ble/Program.cs` or the `.csproj`, run `npm run build:ble:win` on Windows and commit `win-ble/prebuilt`.
+WinRT `GattServiceProvider` helper. No executable is committed: the first time Bluetooth is enabled,
+`win-ble/run-helper.mjs` builds it into `.build/` with the .NET 8 SDK
+(`winget install Microsoft.DotNet.SDK.8`), and rebuilds when the source changes. Wi-Fi, the default,
+needs none of this.
 
 BLE on Windows:
 
@@ -212,3 +211,15 @@ so `npm run credentials` is no longer needed:
 
 Settings live in `~/.config/cyclingos-zwift-live/settings.json`. `/status` returns the same data as JSON.
 The control endpoints (`POST /api/*`) only accept JSON requests from this page.
+
+## Phone pairing code
+
+The Wi-Fi stream is closed to anyone without the pairing code shown in the dashboard's **Phone pairing**
+card (8 characters, created on first run and kept in `settings.json`, mode `0600`). The phone fetches a
+single-use challenge and answers with an HMAC keyed by the code, so the code never crosses the network and a
+captured answer cannot be replayed. Five wrong answers lock that address out for a minute. **New code** in the
+dashboard disconnects every paired phone; pairing can be switched off there for testing. Details and a test
+vector for phone developers are in `docs/phone-prompts/`.
+
+Pairing protects against other devices on the network using the stream. The stream itself is still plain
+HTTP, so it does not hide ride data from someone who can already capture traffic on your Wi-Fi.

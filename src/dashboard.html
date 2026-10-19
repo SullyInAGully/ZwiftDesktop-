@@ -41,6 +41,7 @@
   button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.danger { color:var(--bad); }
   button:disabled { opacity:.5; cursor:default; }
+  .code { font:700 34px/1.1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; letter-spacing:.08em; margin:4px 0 2px; user-select:all; }
   .msg { margin-top:10px; font-size:13px; } .msg.bad { color:var(--bad); }
   .toggle { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); }
   .toggle input { width:18px; height:18px; }
@@ -55,6 +56,7 @@
   <div class="banner wait" id="banner">Checking…</div>
 
   <section class="card"><h2>Zwift account</h2><div class="pad" id="account"></div></section>
+  <section class="card"><h2>Phone pairing</h2><div class="pad" id="pairing"></div></section>
   <section class="card"><h2>Test without Zwift</h2><div class="toggle" style="border:0"><input type="checkbox" id="sim"><div><b>Simulate a ride</b><span>Sends a synthetic 200 W ride on the first catalogued route through the same pipeline: climb engine, Wi-Fi, phone and CSV. No Zwift or trainer needed. Rows and files are labelled “simulated”.</span></div></div></section>
   <section class="card"><h2>Settings</h2><div id="settings"></div></section>
   <section class="card"><h2>Setup checklist</h2><div id="checks"></div></section>
@@ -63,7 +65,7 @@
   <section class="card"><h2>Phone app steps</h2>
     <div class="hint">1. Put the phone on the same Wi-Fi network as this computer.<br>
     2. In the app, open Zwift live and pick “CyclingOS Zwift” (allow local network access when asked), or enter the address shown above.<br>
-    3. The "Phone connected" check turns green. Start a direct Zwift ride; the phone records the Strava-format CSV.</div></section>
+    3. Enter the pairing code shown above when asked. The "Phone connected" check turns green. Start a direct Zwift ride; the phone records the Strava-format CSV.</div></section>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -151,6 +153,25 @@ function renderAccount(s) {
   on("forget", () => confirm(`Remove the saved Zwift login from this ${host(s)}?`) && act("forgetCredentials"));
 }
 
+let pairingKey = null;
+function renderPairing(s) {
+  const key = JSON.stringify([s.pairingRequired, s.pairingCode]);
+  if (key === pairingKey) return;
+  pairingKey = key;
+  $("pairing").innerHTML = s.pairingRequired
+    ? `Enter this code in the phone app the first time you connect:
+       <div class="code">${esc(s.pairingCode)}</div>
+       <div class="hint" style="padding:0">The code never travels over Wi-Fi; the phone only proves it knows it. Anyone on your network without it is refused.</div>
+       <div class="row"><button id="regen">New code</button><button class="danger" id="nopair">Turn off pairing</button></div>
+       <div class="hint" style="padding:8px 0 0">A new code disconnects every paired phone.</div>`
+    : `<div class="msg bad" style="margin:0 0 8px">Pairing is off: anyone on this Wi-Fi network can read your live ride data.</div>
+       <div class="row"><button class="primary" id="pair">Turn on pairing</button></div>`;
+  const on = (id, fn) => $(id) && ($(id).onclick = fn);
+  on("regen", () => confirm("Generate a new code? Paired phones will disconnect until you enter it.") && act("regeneratePairingCode"));
+  on("nopair", () => confirm("Turn off pairing? Anyone on your Wi-Fi network will be able to read your live ride data.") && act("saveSettings", { requirePairing: false }));
+  on("pair", () => act("saveSettings", { requirePairing: true }));
+}
+
 let settingsKey = null;
 function renderSettings(s) {
   const key = JSON.stringify([s.settings, s.interfaces]);
@@ -173,7 +194,7 @@ function renderSettings(s) {
 function render() {
   const s = status;
   if (!s) return;
-  renderAccount(s); renderSettings(s);
+  renderAccount(s); renderPairing(s); renderSettings(s);
   if ($("sim").checked !== s.simulating && !busy) $("sim").checked = s.simulating;
   const stale = Date.now() - lastOk > 5000;
   $("sub").textContent = stale ? "Monitor not responding. Is `npm start` still running?" : `Up ${Math.round((s.now - s.startedAtMs) / 60000)} min`;

@@ -11,6 +11,7 @@ import {
   CREDENTIAL_STORE, clearCredentials, loadCredentials, loadSettings, saveCredentials, saveSettings, savedUsername
 } from "./keychain.mjs";
 import { startLanStream, LAN_DEFAULT_PORT } from "./lan-stream.mjs";
+import { PairingGuard, formatPairingCode, generatePairingCode, isValidPairingCode } from "./pairing.mjs";
 import { startLocalServer } from "./local-server.mjs";
 import { DEFAULT_LOG_PATH, RouteLogWatcher } from "./route-log.mjs";
 import { ZwiftClient } from "./zwift-client.mjs";
@@ -40,6 +41,8 @@ let settings = await loadSettings();
 if (options.advertiseIp) settings.advertiseIp = options.advertiseIp;
 if (options.ble === false) settings.bleEnabled = false;
 if (options.wifi === false) settings.wifiEnabled = false;
+if (!isValidPairingCode(settings.pairingCode)) settings = await saveSettings({ ...settings, pairingCode: generatePairingCode() });
+const pairing = new PairingGuard({ code: settings.pairingCode, required: settings.requirePairing });
 
 // Connection state. Everything below the dashboard is started and stopped from the UI.
 let phase = "setup"; // setup | idle | connecting | running | error
@@ -75,6 +78,7 @@ async function startLan() {
     lan = await startLanStream({
       port: options.lanPort,
       advertiseIp: lanIp(),
+      guard: pairing,
       onError: error => { lanError = error.message; console.error(`Wi-Fi stream: ${error.message}`); }
     });
     lanError = null;
@@ -115,20 +119,31 @@ const actions = {
   },
   async connect() { await connect(); },
   async disconnect() { await disconnect(); phase = username ? "idle" : "setup"; },
+  async regeneratePairingCode() {
+    settings = await saveSettings({ ...settings, pairingCode: generatePairingCode() });
+    await lan?.setPairing({ code: settings.pairingCode, required: settings.requirePairing });
+    if (!lan) pairing.configure({ code: settings.pairingCode, required: settings.requirePairing });
+  },
   async saveSettings(body) {
     const next = {
       ...settings,
       ...(body.advertiseIp !== undefined ? { advertiseIp: validIp(body.advertiseIp) } : {}),
       ...(body.bleEnabled !== undefined ? { bleEnabled: Boolean(body.bleEnabled) } : {}),
       ...(body.wifiEnabled !== undefined ? { wifiEnabled: Boolean(body.wifiEnabled) } : {}),
+      ...(body.requirePairing !== undefined ? { requirePairing: Boolean(body.requirePairing) } : {}),
       ...(body.autoConnect !== undefined ? { autoConnect: Boolean(body.autoConnect) } : {})
     };
     const addressChanged = next.advertiseIp !== settings.advertiseIp;
+    const pairingWasRequired = settings.requirePairing;
     settings = await saveSettings(next);
     ble.enabled = settings.bleEnabled;
     if (settings.bleEnabled) ble.start(); else await ble.close();
     if (settings.wifiEnabled) await startLan(); else await stopLan();
     await lan?.setAdvertiseIp(lanIp());
+    if (settings.requirePairing !== pairingWasRequired) {
+      await lan?.setPairing({ required: settings.requirePairing });
+      if (!lan) pairing.configure({ required: settings.requirePairing });
+    }
     // The Zwift game only learns the receiver address at registration, so re-register on change.
     if (addressChanged && connection) await connect();
   }
@@ -334,6 +349,8 @@ function getStatus() {
     lanName: lan?.name ?? null,
     lanUrl: lan ? `http://${lanIp() ?? "this-computer"}:${lan.port}` : null,
     lanPhones: lan?.clients ?? 0,
+    pairingRequired: settings.requirePairing,
+    pairingCode: formatPairingCode(settings.pairingCode),
     lanError,
     sessionCsv: session ? session.csv : null,
     live: riding ? live : null

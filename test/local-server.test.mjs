@@ -47,3 +47,16 @@ test("control actions reject foreign origins and non-JSON requests", async () =>
   assert.deepEqual(calls, [{ a: 1 }]);
   await server.close();
 });
+
+test("dashboard routes refuse a foreign Host header (DNS rebinding)", async () => {
+  const server = await startLocalServer({ port: 0, getState: () => ({}), getStatus: () => ({ pairingCode: "SECRET" }) });
+  const { port } = server.address();
+  const get = host => new Promise(resolve => {
+    request({ port, path: "/status", headers: { Host: host } }, res => { res.resume(); resolve(res.statusCode); }).end();
+  });
+  assert.equal(await get(`127.0.0.1:${port}`), 200);
+  assert.equal(await get(`localhost:${port}`), 200);
+  assert.equal(await get("evil.example"), 403);
+  assert.equal(await get(`evil.example:${port}`), 403);
+  await server.close();
+});

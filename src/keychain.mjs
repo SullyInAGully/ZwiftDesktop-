@@ -61,7 +61,7 @@ export async function loadCredentials() {
 
 export const SETTINGS_PATH = join(homedir(), ".config", "cyclingos-zwift-live", "settings.json");
 // Wi-Fi is the phone link on macOS and Windows; the BLE peripheral is kept as an opt-in legacy transport.
-const DEFAULT_SETTINGS = { advertiseIp: null, wifiEnabled: true, bleEnabled: false, autoConnect: true };
+const DEFAULT_SETTINGS = { advertiseIp: null, wifiEnabled: true, bleEnabled: false, autoConnect: true, requirePairing: true, pairingCode: null };
 
 export async function loadSettings() {
   try {
@@ -76,6 +76,8 @@ export async function saveSettings(settings) {
     advertiseIp: settings.advertiseIp || null,
     wifiEnabled: settings.wifiEnabled !== false,
     bleEnabled: settings.bleEnabled === true,
+    requirePairing: settings.requirePairing !== false,
+    pairingCode: settings.pairingCode || null,
     autoConnect: settings.autoConnect !== false
   };
   await mkdir(dirname(SETTINGS_PATH), { recursive: true, mode: 0o700 });
