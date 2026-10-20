@@ -92,6 +92,18 @@ let status = null, lastOk = 0;
 const isWin = s => s.platform === "win32";
 const host = s => isWin(s) ? "PC" : "Mac";
 
+function routeCheck(s) {
+  const title = "Route recognised for climb data";
+  const check = s.profileCheck ?? { state: "unknown" };
+  if (s.routeKnown === null) return { state: "wait", title, detail: `Starts once you're riding. ${s.catalogueCount} routes are in the catalogue.` };
+  if (check.state === "mismatch") {
+    return { state: "warn", title, detail: `${esc(s.routeName ?? "This route")}: the stored profile does not follow the altitude Zwift is reporting, so climb information is switched off for this ride. Please tell whoever set this up.` };
+  }
+  if (s.routeKnown === false) return { state: "warn", title, detail: `${esc(s.routeName ?? "This route")} isn't in the catalogue (${s.catalogueCount} routes are), so climb columns will be empty.` };
+  const verified = check.state === "ok" ? "verified against Zwift's altitude" : "checking against Zwift's altitude as you ride…";
+  return { state: "ok", title, detail: `${esc(s.routeName)}: climb information is on (${verified}).` };
+}
+
 function checks(s) {
   const riding = s.rideStatus === "riding";
   const list = baseChecks(s, riding);
@@ -113,10 +125,7 @@ function baseChecks(s, riding) {
         : "Zwift doesn't seem to be open. Open Zwift and start a ride." },
     { state: riding && s.dataFresh ? "ok" : (s.zwiftConnected ? "warn" : "wait"), title: "Live data is fresh",
       detail: riding && s.dataFresh ? "1 Hz samples are flowing." : "No fresh rider data yet. Pedal in Zwift (not paused or in the menu)." },
-    { state: s.routeKnown === true ? "ok" : (s.routeKnown === false ? "warn" : "wait"), title: "Route recognised for climb data",
-      detail: s.routeKnown === true ? `${s.routeName}: climb fields are being calculated (catalogue v${s.routeCatalogueVersion}).`
-        : s.routeKnown === false ? `${s.routeName ?? "This route"} isn't in the catalogue, so climb columns will be empty. Known routes: ${s.catalogueRoutes.join(", ") || "none"}. Add one with npm run route:add.`
-        : `Starts once you're riding. Known routes: ${s.catalogueRoutes.join(", ") || "none"}.` },
+    routeCheck(s),
     { state: !s.wifiEnabled ? "bad" : s.lanError ? "bad" : s.lanListening ? "ok" : "wait", title: "Wi-Fi stream for the phone",
       detail: !s.wifiEnabled ? "Turned off in Settings below. The phone apps need it."
         : s.lanError ? esc(s.lanError)

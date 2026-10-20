@@ -8,3 +8,6 @@ npm-debug.log*
 win-ble/bin/
 win-ble/obj/
 dist/
+# Generated from the zwift-data package (profiles derived from Strava segment streams): internal use only.
+routes/imported-zwift-data.json
+routes/import-report.json

@@ -60,6 +60,12 @@ for (const entry of ["src", "proto", "routes", "package.json", "package-lock.jso
 }
 cpSync(join(root, "mac-ble"), join(stage, "mac-ble"), { recursive: true });
 
+if (existsSync(join(root, "routes", "imported-zwift-data.json"))) {
+  console.log("Including the imported route catalogue (routes/imported-zwift-data.json).");
+} else {
+  console.warn("WARNING: routes/imported-zwift-data.json is missing, so riders will only get your recorded routes. Run: npm run catalog:import");
+}
+
 console.log("Installing production dependencies…");
 run("npm", ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund", "--silent"], { cwd: stage });
 

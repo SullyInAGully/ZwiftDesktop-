@@ -238,3 +238,23 @@ Drive); the rider right-clicks the launcher and chooses Open the first time, and
 incoming connections for `node`. The monitor writes a log to `~/Library/Logs/CyclingOS Zwift Link/monitor.log`,
 which the dashboard's "Show log file" link reveals so a rider can send it to you. The zip is unsigned and
 un-notarised, so macOS shows the "cannot verify the developer" prompt on first open.
+
+## Route catalogue (climb context for every Zwift route)
+
+Climb fields (terrain, distance to next climb or summit, climb length and gradient, elevation left) need each
+route's elevation profile. Two sources, in priority order:
+
+1. **Routes you recorded** (`routes/catalog-v1.json`, add with `npm run route:add -- <ride.csv>`). Always win.
+2. **Imported profiles** (`routes/imported-zwift-data.json`), built by `npm run catalog:import` from the
+   MIT-licensed [`zwift-data`](https://github.com/andipaetzold/zwift-data) package (dev dependency, pinned). Its
+   route ids are the same hashes Zwift sends, so routes match directly. About 286 cycling routes pass the
+   importer's checks (length within 3% of Zwift's distance, climbing within 10% of Zwift's published total,
+   lead-ins trimmed); `routes/import-report.json` lists the rest and why.
+
+The imported profiles were originally derived from Strava segment streams. That file and its report are
+**git-ignored on purpose**: they are for internal use (the rider package includes them) and should not be
+published in a public repository.
+
+While someone rides, the monitor compares Zwift's live altitude with what the catalogue expects. If the shape
+disagrees (wrong route or a shifted profile) climb information is switched off for that route and the dashboard
+says so, rather than giving wrong context. Every row's `routeProfileVersion` records which catalogue it came from.

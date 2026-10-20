@@ -56,7 +56,7 @@ Double-click **Start Zwift Link** (no right-click needed) → open Zwift and sta
 | "Zwift game connected" stays orange | Quit Zwift (Cmd+Q), reopen, start a ride. Check Zwift is on **this** Mac and the Companion app is closed. |
 | Phone can't find the Mac | Same Wi-Fi? Not a guest network? Did they click **Allow** for "node"? Otherwise enter the address manually (step 6). |
 | Pairing code rejected | Re-type it. **5 wrong tries lock the phone out for a minute.** If you reset it (dashboard → **New code**), every phone must enter the new code. |
-| "Route recognised" is orange | Normal on routes other than **The Classic**: the ride still records, but without climb information. |
+| "Route recognised" is orange | Either the route isn't in the catalogue (the ride still records, without climb information), or the stored profile didn't match what Zwift reported and climb information was switched off for that ride. Send the log file. |
 | Everything is stuck | Click **Stop everything**, then **Start again**. Still stuck: quit the monitor and reopen it. |
 | Need help from you | At the bottom of the dashboard click **Show log file** and have them send you `monitor.log`. |
 
@@ -64,7 +64,7 @@ Double-click **Start Zwift Link** (no right-click needed) → open Zwift and sta
 
 ## Good to know
 
-- **A green banner** ("All set. Data is flowing to your phone") means every checklist item is green. It will not go green on routes the app doesn't know yet (see above).
+- **A green banner** ("All set. Data is flowing to your phone") means every checklist item is green. It stays orange on a route the catalogue doesn't have, or one whose stored profile disagreed with Zwift's altitude.
 - **Their Zwift password** is stored only in that Mac's Keychain, and is used only to register the Mac with Zwift.
 - **Updating:** send them a new zip. They replace the folder. Their login, pairing code and settings are kept, because those live outside the folder.
 - **This is unofficial.** It uses Zwift's unofficial connection method, so a Zwift update could break it. If it suddenly stops working for everyone, that's the likely cause.

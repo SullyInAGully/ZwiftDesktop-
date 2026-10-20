@@ -9,31 +9,90 @@ const MIN_CLIMB_LENGTH_M = 300;
 const GRADIENT_WINDOW_M = 100;
 const SMOOTH_WINDOW_M = 150;
 
+/** One route's profile. The climb analysis is only computed the first time a route is actually ridden. */
+class RouteProfile {
+  constructor(route, version) {
+    Object.assign(this, route);
+    this.version = version;
+    this.points = route.points.map(([distanceM, altitudeM]) => ({ distanceM, altitudeM }));
+  }
+
+  get smoothed() {
+    return this.cachedSmoothed ??= smoothAltitude(this.points, SMOOTH_WINDOW_M);
+  }
+
+  get climbs() {
+    return this.cachedClimbs ??= detectClimbs(this.smoothed);
+  }
+
+  get remainingGain() {
+    return this.cachedRemainingGain ??= remainingGain(this.smoothed, this.plannedElevationGainM);
+  }
+}
+
 /** Versioned Zwift route elevation profiles and deterministic climb context. */
 export class RouteProfileCatalogue {
+  /**
+   * @param document one catalogue, or an array in priority order: when several describe the same route
+   *   id, the first wins. Each route remembers which catalogue's version it came from.
+   */
   constructor(document = { schemaVersion: 1, catalogueVersion: "empty", routes: [] }) {
-    if (document.schemaVersion !== 1) {
-      throw new Error(`Unsupported route catalogue schema ${document.schemaVersion}`);
+    const documents = Array.isArray(document) ? document : [document];
+    for (const doc of documents) {
+      if (doc.schemaVersion !== 1) throw new Error(`Unsupported route catalogue schema ${doc.schemaVersion}`);
     }
-    this.version = document.catalogueVersion;
-    this.routes = new Map(document.routes.map(route => {
-      const points = route.points.map(([distanceM, altitudeM]) => ({ distanceM, altitudeM }));
-      const smoothed = smoothAltitude(points, SMOOTH_WINDOW_M);
-      return [String(route.routeId), {
-        ...route,
-        points,
-        smoothed,
-        climbs: detectClimbs(smoothed),
-        remainingGain: remainingGain(smoothed, route.plannedElevationGainM)
-      }];
-    }));
+    this.version = documents.map(doc => doc.catalogueVersion).join("+") || "empty";
+    this.routes = new Map();
+    for (const doc of documents) {
+      for (const route of doc.routes) {
+        const id = String(route.routeId);
+        if (!this.routes.has(id)) this.routes.set(id, new RouteProfile(route, doc.catalogueVersion));
+      }
+    }
   }
 
   static async load(path) {
     return new RouteProfileCatalogue(JSON.parse(await readFile(path, "utf8")));
   }
 
-  enrich(row) {
+  /** Loads catalogues in priority order. The first must exist; later ones (generated) may be missing. */
+  static async loadMany(paths) {
+    const documents = [];
+    for (const [index, path] of paths.entries()) {
+      try {
+        documents.push(JSON.parse(await readFile(path, "utf8")));
+      } catch (error) {
+        if (index === 0 || error.code !== "ENOENT") throw error;
+      }
+    }
+    return new RouteProfileCatalogue(documents);
+  }
+
+  /** How many routes each source catalogue contributed, e.g. { "1": 1, "zwift-data-2.1.0": 285 }. */
+  sourceCounts() {
+    const counts = {};
+    for (const route of this.routes.values()) counts[route.version] = (counts[route.version] ?? 0) + 1;
+    return counts;
+  }
+
+  /** Altitude the catalogue expects at a position along the route, or null if the route is unknown. */
+  altitudeAt(routeId, distanceM) {
+    const profile = this.routes.get(String(routeId));
+    if (!profile || !Number.isFinite(distanceM)) return null;
+    const points = profile.points;
+    const d = clamp(distanceM, 0, points.at(-1).distanceM);
+    let lo = 0;
+    let hi = points.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (points[mid].distanceM <= d) lo = mid; else hi = mid;
+    }
+    const span = points[hi].distanceM - points[lo].distanceM;
+    return span <= 0 ? points[lo].altitudeM : points[lo].altitudeM + ((points[hi].altitudeM - points[lo].altitudeM) * (d - points[lo].distanceM)) / span;
+  }
+
+  /** @param trusted false switches the climb context off (e.g. the profile disagrees with Zwift's altitude) */
+  enrich(row, { trusted = true } = {}) {
     const profile = this.routes.get(String(row.routeId));
     const gradient = finite(row.gradientPct) ?? finite(row.zwiftGrade);
     const fallback = {
@@ -52,7 +111,7 @@ export class RouteProfileCatalogue {
       nextClimbGainM: null,
       routeProfileVersion: null
     };
-    if (!profile || !Number.isFinite(row.routeDistanceM)) return { ...row, ...fallback };
+    if (!profile || !trusted || !Number.isFinite(row.routeDistanceM)) return { ...row, ...fallback };
 
     const distanceM = clamp(row.routeDistanceM, 0, profile.plannedDistanceM);
     const profileGradient = gradientAt(profile.smoothed, distanceM, GRADIENT_WINDOW_M);
@@ -76,7 +135,7 @@ export class RouteProfileCatalogue {
       nextClimbLengthM: next?.lengthM ?? null,
       nextClimbAvgGradientPct: next?.avgGradientPct ?? null,
       nextClimbGainM: next?.gainM ?? null,
-      routeProfileVersion: this.version
+      routeProfileVersion: profile.version
     };
   }
 }
@@ -142,9 +201,14 @@ function gradientAt(points, distanceM, windowM) {
 
 function smoothAltitude(points, windowM) {
   const half = windowM / 2;
-  return points.map(point => {
-    const inWindow = points.filter(p => Math.abs(p.distanceM - point.distanceM) <= half);
-    return { ...point, altitudeM: inWindow.reduce((sum, p) => sum + p.altitudeM, 0) / inWindow.length };
+  const prefix = new Float64Array(points.length + 1);
+  for (let i = 0; i < points.length; i += 1) prefix[i + 1] = prefix[i] + points[i].altitudeM;
+  let lo = 0;
+  let hi = 0;
+  return points.map((point, i) => {
+    while (points[lo].distanceM < point.distanceM - half) lo += 1;
+    while (hi < points.length && points[hi].distanceM <= point.distanceM + half) hi += 1;
+    return { ...point, altitudeM: (prefix[hi] - prefix[lo]) / (hi - lo) };
   });
 }
 

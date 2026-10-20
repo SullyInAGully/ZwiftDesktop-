@@ -18,6 +18,7 @@ import { DEFAULT_LOG_PATH, RouteLogWatcher } from "./route-log.mjs";
 import { ZwiftClient } from "./zwift-client.mjs";
 import { RouteProfileCatalogue } from "./route-profile.mjs";
 import { RideSimulator } from "./simulator.mjs";
+import { ProfileCheck } from "./profile-check.mjs";
 import { startLogFile } from "./logfile.mjs";
 
 const CSV_FIELDS = [
@@ -40,7 +41,13 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseArgs(process.argv.slice(2));
 const logPath = startLogFile();
 const appVersion = await readVersion();
-const routeProfiles = await RouteProfileCatalogue.load(options.routeCatalogue);
+// Routes you recorded yourself come first and win; the generated catalogue (npm run catalog:import) fills in the rest.
+const routeProfiles = await RouteProfileCatalogue.loadMany([
+  options.routeCatalogue,
+  ...(options.importedRoutes ? [join(root, "routes", "imported-zwift-data.json")] : [])
+]);
+console.log(`Route catalogue: ${routeProfiles.routes.size} routes (${JSON.stringify(routeProfiles.sourceCounts())})`);
+const profileCheck = new ProfileCheck();
 let settings = await loadSettings();
 if (options.advertiseIp) settings.advertiseIp = options.advertiseIp;
 if (options.ble === false) settings.bleEnabled = false;
@@ -137,9 +144,10 @@ const actions = {
     console.log("\nQuit requested from the dashboard.");
     stopping = true;
   },
-  async simulate({ enabled }) {
+  async simulate({ enabled, routeId }) {
     if (stopped && enabled) throw new Error("Everything is stopped. Press Start again first.");
-    simulator = enabled ? new RideSimulator(routeProfiles) : null;
+    if (enabled && routeId != null && !routeProfiles.routes.has(String(routeId))) throw new Error(`Route ${routeId} is not in the catalogue.`);
+    simulator = enabled ? new RideSimulator(routeProfiles, { routeId: routeId ?? null }) : null;
     session = null;
     latestPublished = { status: "waiting", sampledAt: new Date().toISOString() };
   },
@@ -231,7 +239,20 @@ while (!stopping) {
       dataFresh: true,
       ...source
     };
-    const row = routeProfiles.enrich(simulated ? base : enrichRoute(base, connection.routeWatcher.state));
+    const located = simulated ? base : enrichRoute(base, connection.routeWatcher.state);
+    // Cross-check the stored profile against the altitude Zwift reports; if they disagree, drop climb context.
+    const expectedAltitudeM = routeProfiles.altitudeAt(located.routeId, located.routeDistanceM);
+    const wasMismatch = profileCheck.state.state === "mismatch";
+    profileCheck.update({
+      routeId: located.routeId,
+      liveAltitudeM: located.altitudeM,
+      expectedAltitudeM,
+      active: expectedAltitudeM != null && !located.onLeadIn && (located.speedKmh ?? 0) > 1
+    });
+    if (!wasMismatch && profileCheck.state.state === "mismatch") {
+      console.warn(`Route profile for ${located.routeName ?? located.routeId} does not follow Zwift's altitude (RMS ${profileCheck.state.rmsM} m); climb data is switched off for this route.`);
+    }
+    const row = routeProfiles.enrich(located, { trusted: profileCheck.state.state !== "mismatch" });
     if (!session) session = await openSession(row);
     latestPublished = row;
     await appendFile(session.csv, `${csvRow(row)}\n`);
@@ -397,9 +418,11 @@ function getStatus() {
     rideStatus: live.status,
     dataFresh: Boolean(live.dataFresh),
     routeCatalogueVersion: routeProfiles.version,
-    catalogueRoutes: [...routeProfiles.routes.values()].map(r => r.routeName),
+    catalogueCount: routeProfiles.routes.size,
+    catalogueSources: routeProfiles.sourceCounts(),
+    profileCheck: profileCheck.state,
     routeName: live.routeName ?? null,
-    routeKnown: riding ? live.routeProfileVersion != null : null,
+    routeKnown: riding ? (live.routeProfileVersion != null || profileCheck.state.state === "mismatch") : null,
     bleEnabled: settings.bleEnabled,
     bleReady: ble.ready,
     blePhones: ble.subscribers,
@@ -479,6 +502,7 @@ function enrichRoute(row, route) {
     plannedElevationGainM: route.plannedAscentM,
     routeDistanceM,
     remainingDistanceM,
+    onLeadIn: leadInDistanceM > 0 && row.eventDistanceM != null && row.eventDistanceM < leadInDistanceM,
     routeCheckpoint: route.checkpoint,
     routeCheckpointCount: route.checkpointCount
   };
@@ -509,6 +533,7 @@ function parseArgs(args) {
     apiPort: 8787,
     logPath: DEFAULT_LOG_PATH,
     routeCatalogue: join(root, "routes", "catalog-v1.json"),
+    importedRoutes: true,
     lanPort: LAN_DEFAULT_PORT,
     ble: true,
     wifi: true,
@@ -523,7 +548,7 @@ function parseArgs(args) {
     else if (arg === "--api-host") values.apiHost = args[++i];
     else if (arg === "--api-port") values.apiPort = Number(args[++i]);
     else if (arg === "--log") values.logPath = resolve(args[++i]);
-    else if (arg === "--route-catalogue") values.routeCatalogue = resolve(args[++i]);
+    else if (arg === "--route-catalogue") { values.routeCatalogue = resolve(args[++i]); values.importedRoutes = false; }
     else if (arg === "--lan-port") values.lanPort = Number(args[++i]);
     else if (arg === "--no-ble") values.ble = false;
     else if (arg === "--no-wifi") values.wifi = false;
