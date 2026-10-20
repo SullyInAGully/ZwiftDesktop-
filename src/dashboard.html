@@ -96,6 +96,9 @@ function routeCheck(s) {
   const title = "Route recognised for climb data";
   const check = s.profileCheck ?? { state: "unknown" };
   if (s.routeKnown === null) return { state: "wait", title, detail: `Starts once you're riding. ${s.catalogueCount} routes are in the catalogue.` };
+  if (!s.routePositionKnown) {
+    return { state: "warn", title, detail: `Zwift's log isn't being read (expected at <code>${esc(s.routeLogPath)}</code>), so route position is unknown and climb fields stay empty. Start the bridge with <code>--log PATH</code> if Zwift writes it elsewhere.` };
+  }
   if (check.state === "mismatch") {
     return { state: "warn", title, detail: `${esc(s.routeName ?? "This route")}: the stored profile does not follow the altitude Zwift is reporting, so climb information is switched off for this ride. Please tell whoever set this up.` };
   }

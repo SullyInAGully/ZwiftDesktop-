@@ -162,8 +162,16 @@ Zwift ride. The phone records the normal Strava-format CSV as before.
 - **Zwift log:** read from `DocumentsZwiftLogsLog.txt`, including OneDrive-redirected Documents
   folders; the monitor waits for it to appear. Pass `--log PATH` if Zwift keeps it elsewhere.
 
-Add routes to `routes/catalog-v1.json` with `npm run route:add -- <recording.csv>` after riding
-them. Unknown routes leave climb fields empty rather than guessing.
+### Route catalogue
+
+Climb fields use the checked-in route catalogues. Routes recorded locally in
+`routes/catalog-v1.json` take priority, while `routes/imported-zwift-data.json` supplies the larger
+generated catalogue. Unknown routes leave climb fields empty rather than guessing, and the live
+altitude check disables climb context if a stored profile does not match what Zwift reports.
+
+The bridge never modifies a catalogue during a ride. To add a missing route deliberately, use
+`npm run route:add -- <recording.csv>`; it requires a complete lap unless `--force` is supplied.
+Route position still comes from Zwift's `Log.txt`, so climb data needs that log to be readable.
 
 ## Bluetooth link (legacy, opt-in)
 

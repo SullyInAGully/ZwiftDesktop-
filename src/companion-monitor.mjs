@@ -275,6 +275,7 @@ while (!stopping) {
   if (options.once && session) stopping = true;
 }
 
+// disconnect() clears the session, so remember the last recording for the closing message.
 const lastSession = session;
 await disconnect();
 await api.close();
@@ -422,7 +423,10 @@ function getStatus() {
     catalogueSources: routeProfiles.sourceCounts(),
     profileCheck: profileCheck.state,
     routeName: live.routeName ?? null,
-    routeKnown: riding ? (live.routeProfileVersion != null || profileCheck.state.state === "mismatch") : null,
+    routeKnown: riding ? routeProfiles.routes.has(String(live.routeId)) : null,
+    // The position along the route comes from Zwift's Log.txt; without it climb fields stay empty.
+    routePositionKnown: riding ? Number.isFinite(live.routeDistanceM) : null,
+    routeLogPath: options.logPath,
     bleEnabled: settings.bleEnabled,
     bleReady: ble.ready,
     blePhones: ble.subscribers,
@@ -500,6 +504,7 @@ function enrichRoute(row, route) {
     routeName: route.routeName,
     plannedDistanceM,
     plannedElevationGainM: route.plannedAscentM,
+    leadInDistanceM: route.leadInDistanceM,
     routeDistanceM,
     remainingDistanceM,
     onLeadIn: leadInDistanceM > 0 && row.eventDistanceM != null && row.eventDistanceM < leadInDistanceM,

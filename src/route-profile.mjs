@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
+import process from "node:process";
 
 const SECTION_UP_PCT = 1.5;
 const SECTION_DOWN_PCT = -1.5;
@@ -138,6 +139,100 @@ export class RouteProfileCatalogue {
       routeProfileVersion: profile.version
     };
   }
+}
+
+export const PROFILE_STEP_M = 25;
+/** The first and last sample of a lap must be this close to the route's start and end. */
+export const LAP_END_TOLERANCE_M = 50;
+/** Larger holes mean dropped samples; 1 Hz at 70 km/h is under 20 m apart. */
+export const LAP_MAX_GAP_M = 100;
+/** The profile's climbing must match Zwift's planned ascent within 15% or 10 m (The Classic: 48.1 vs 48.4 m). */
+const GAIN_TOLERANCE_PCT = 15;
+const GAIN_TOLERANCE_M = 10;
+
+/** Resamples {distanceM, altitudeM} samples of one ridden lap into catalogue points every 25 m. */
+export function buildRoutePoints(samples, plannedDistanceM, stepM = PROFILE_STEP_M) {
+  const sorted = samples
+    .filter(x => Number.isFinite(x.distanceM) && Number.isFinite(x.altitudeM))
+    .sort((a, b) => a.distanceM - b.distanceM);
+  const points = [];
+  for (let distanceM = 0; distanceM <= plannedDistanceM; distanceM += stepM) {
+    points.push([distanceM, round(interpolateAltitude(sorted, distanceM), 3)]);
+  }
+  if (points.at(-1)[0] !== plannedDistanceM) {
+    points.push([plannedDistanceM, round(interpolateAltitude(sorted, plannedDistanceM), 3)]);
+  }
+  return points;
+}
+
+/**
+ * Decides whether samples cover one whole lap of a route well enough to become its catalogue profile:
+ * from the start line to the finish with no holes, and climbing that agrees with Zwift's own figure.
+ */
+export function checkRouteRecording(samples, { plannedDistanceM, plannedElevationGainM }) {
+  const problems = [];
+  const sorted = samples
+    .filter(x => Number.isFinite(x.distanceM) && Number.isFinite(x.altitudeM))
+    .sort((a, b) => a.distanceM - b.distanceM);
+  if (!(plannedDistanceM > 0)) problems.push("the route length is unknown (Zwift log not read)");
+  if (sorted.length < 2) problems.push("too few samples");
+  if (problems.length) return { complete: false, problems, coveragePct: 0, maxGapM: null, gainM: null };
+
+  const startGapM = sorted[0].distanceM;
+  const endGapM = plannedDistanceM - sorted.at(-1).distanceM;
+  let maxGapM = Math.max(startGapM, endGapM);
+  let coveredM = 0;
+  for (let i = 1; i < sorted.length; i += 1) {
+    const gap = sorted[i].distanceM - sorted[i - 1].distanceM;
+    maxGapM = Math.max(maxGapM, gap);
+    if (gap <= LAP_MAX_GAP_M) coveredM += gap;
+  }
+  const coveragePct = Math.min(100, (coveredM / plannedDistanceM) * 100);
+  if (startGapM > LAP_END_TOLERANCE_M) problems.push(`recording starts ${Math.round(startGapM)} m into the route`);
+  if (endGapM > LAP_END_TOLERANCE_M) problems.push(`recording stops ${Math.round(endGapM)} m before the finish`);
+  if (maxGapM > LAP_MAX_GAP_M) problems.push(`a ${Math.round(maxGapM)} m stretch has no samples`);
+
+  const points = buildRoutePoints(sorted, plannedDistanceM);
+  let gainM = 0;
+  for (let i = 1; i < points.length; i += 1) gainM += Math.max(0, points[i][1] - points[i - 1][1]);
+  if (Number.isFinite(plannedElevationGainM)) {
+    const allowed = Math.max(GAIN_TOLERANCE_M, (plannedElevationGainM * GAIN_TOLERANCE_PCT) / 100);
+    if (Math.abs(gainM - plannedElevationGainM) > allowed) {
+      problems.push(`climbing ${Math.round(gainM)} m does not match Zwift's ${Math.round(plannedElevationGainM)} m`);
+    }
+  }
+  return { complete: problems.length === 0, problems, coveragePct, maxGapM, gainM };
+}
+
+/** Adds or replaces one route in the catalogue file, bumping its version; written atomically. */
+export async function saveRouteToCatalogue(path, route) {
+  let document = { schemaVersion: 1, catalogueVersion: "0", generatedAt: null, routes: [] };
+  try { document = JSON.parse(await readFile(path, "utf8")); } catch {}
+  document.generatedAt = new Date().toISOString();
+  document.catalogueVersion = String((Number(document.catalogueVersion) || 0) + 1);
+  document.routes = document.routes.filter(item => String(item.routeId) !== String(route.routeId));
+  document.routes.push(route);
+  document.routes.sort((a, b) => String(a.routeId).localeCompare(String(b.routeId)));
+  const temporary = `${path}.${process.pid}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`);
+  await rename(temporary, path);
+  return document;
+}
+
+function interpolateAltitude(values, distanceM) {
+  const afterIndex = values.findIndex(x => x.distanceM >= distanceM);
+  if (afterIndex < 0) return values.at(-1).altitudeM;
+  if (afterIndex === 0) return values[0].altitudeM;
+  const before = values[afterIndex - 1];
+  const after = values[afterIndex];
+  if (after.distanceM === before.distanceM) return after.altitudeM;
+  const ratio = (distanceM - before.distanceM) / (after.distanceM - before.distanceM);
+  return before.altitudeM + (after.altitudeM - before.altitudeM) * ratio;
+}
+
+function round(value, digits) {
+  const scale = 10 ** digits;
+  return Math.round(value * scale) / scale;
 }
 
 export function detectClimbs(points) {
